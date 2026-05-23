@@ -176,6 +176,8 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 👆 | Chrome Wayland touchpad gestures |
 | 🌌 | Wallpaper applied automatically |
 
+![Wallpaper Preview](https://raw.githubusercontent.com/felipy2k/Fedora-Y2K/main/Y2K_Wallpaper.jpeg)
+
 ---
 
 ## ⚙️ Requirements
