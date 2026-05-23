@@ -608,8 +608,8 @@ apply_settings() {
 
   # ── Wallpaper ──
   step "Downloading and applying wallpaper"
-  WALLPAPER_URL="https://image-1.uhdpaper.com/wallpaper/lighthouse-sunset-scenery-digital-art-4k-wallpaper-uhdpaper.com-326@1@m.jpg"
-  WALLPAPER_PATH="$HOME/Pictures/nasa-wallpaper.jpg"
+  WALLPAPER_URL="https://raw.githubusercontent.com/felipy2k/Fedora-Y2K/main/Y2K_Wallpaper.jpeg"
+  WALLPAPER_PATH="$HOME/Pictures/Y2K_Wallpaper.jpeg"
   mkdir -p "$HOME/Pictures"
   if curl -fsSL "$WALLPAPER_URL" -o "$WALLPAPER_PATH"; then
     try gsettings set org.gnome.desktop.background picture-uri      "file://$WALLPAPER_PATH"
