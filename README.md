@@ -176,6 +176,11 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 👆 | Chrome Wayland touchpad gestures |
 | 🌌 | Lighthouse sunset wallpaper applied automatically |
 
+> **Wallpaper preview:**  
+> [![Wallpaper Preview](https://image-1.uhdpaper.com/wallpaper/lighthouse-sunset-scenery-digital-art-4k-wallpaper-uhdpaper.com-326@1@m.jpg)](https://image-1.uhdpaper.com/wallpaper/lighthouse-sunset-scenery-digital-art-4k-wallpaper-uhdpaper.com-326@1@m.jpg)
+>
+> 💡 *If the preview doesn't load (hotlink protection), save the image as `wallpaper.jpg` in the repo root and update `WALLPAPER_URL` in the script.*
+
 ---
 
 ## ⚙️ Requirements
