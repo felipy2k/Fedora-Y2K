@@ -406,15 +406,18 @@ install_gnome_extensions() {
   fi
 
   EXTENSIONS=(
-    AlphabeticalAppGrid@stuarthayhurst        # Alphabetical App Grid
-    appindicatorsupport@rgcjonas.gmail.com    # AppIndicator (system tray support)
-    blur-my-shell@aunetx                      # Blur my Shell (blur panel, dash, overview)
-    caffeine@patapon.info                     # Caffeine (prevent suspend)
-    clipboard-indicator@tudmotu.com           # Clipboard Indicator (clipboard manager)
-    dash-to-dock@micxgx.gmail.com             # Dash to Dock
-    gsconnect@andyholmes.github.io            # GSConnect (KDE Connect for GNOME)
-    tilingshell@ferrarodomenico.com           # Tiling Shell
-    Vitals@CoreCoding.com                     # Vitals (CPU/RAM/temp/network monitor in panel)
+    AlphabeticalAppGrid@stuarthayhurst                  # Alphabetical App Grid
+    appindicatorsupport@rgcjonas.gmail.com              # AppIndicator (system tray support)
+    blur-my-shell@aunetx                                # Blur my Shell (blur panel, dash, overview)
+    BringOutSubmenuOfPowerOffLogoutButton@pratap.fastmail.fm  # Bring Out Submenu Of Power Off Button
+    caffeine@patapon.info                               # Caffeine (prevent suspend)
+    clipboard-indicator@tudmotu.com                     # Clipboard Indicator (clipboard manager)
+    dash-to-dock@micxgx.gmail.com                       # Dash to Dock
+    editdesktopfiles@dannflower                         # Edit Desktop Files
+    gsconnect@andyholmes.github.io                      # GSConnect (KDE Connect for GNOME)
+    just-perfection-desktop@just-perfection             # Just Perfection (GNOME Shell tweaker)
+    tilingshell@ferrarodomenico.com                     # Tiling Shell
+    Vitals@CoreCoding.com                               # Vitals (CPU/RAM/temp/network monitor in panel)
   )
 
   if command -v gext &>/dev/null; then
@@ -605,7 +608,7 @@ apply_settings() {
 
   # ── Wallpaper ──
   step "Downloading and applying wallpaper"
-  WALLPAPER_URL="https://images-assets.nasa.gov/image/art002e009287/art002e009287~large.jpg?w=1920&h=1280&fit=clip&crop=faces%2Cfocalpoint"
+  WALLPAPER_URL="https://image-1.uhdpaper.com/wallpaper/lighthouse-sunset-scenery-digital-art-4k-wallpaper-uhdpaper.com-326@1@m.jpg"
   WALLPAPER_PATH="$HOME/Pictures/nasa-wallpaper.jpg"
   mkdir -p "$HOME/Pictures"
   if curl -fsSL "$WALLPAPER_URL" -o "$WALLPAPER_PATH"; then
