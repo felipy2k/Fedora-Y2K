@@ -210,7 +210,7 @@ install_rpms() {
     gnome-calendar snapshot gnome-characters gnome-abrt gnome-connections \
     gnome-contacts simple-scan gnome-disk-utility gnome-text-editor \
     gnome-font-viewer gnome-color-manager gnome-software gnome-clocks \
-    gnome-logs evince loupe file-roller
+    gnome-logs evince loupe file-roller drawing
 
   step "Utilities"
   try sudo dnf install -y \
