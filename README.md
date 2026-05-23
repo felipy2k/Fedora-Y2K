@@ -126,10 +126,13 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | AlphabeticalAppGrid | Sorts app grid alphabetically |
 | AppIndicator Support | System tray icons |
 | Blur my Shell | Blur effect on panel, dash and overview |
+| Bring Out Submenu Of Power Off Button | Expands power menu options |
 | Caffeine | Prevent sleep/suspend |
 | Clipboard Indicator | Clipboard history manager |
 | Dash to Dock | Persistent app dock |
+| Edit Desktop Files | Edit `.desktop` files from the app grid |
 | GSConnect | KDE Connect integration for GNOME |
+| Just Perfection | Fine-tune GNOME Shell elements |
 | Tiling Shell | Window tiling manager |
 | Vitals | CPU, RAM, temp, fan, network in panel (uses `lm_sensors`) |
 
@@ -171,7 +174,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🪟 | Minimize + Maximize buttons on title bar |
 | 🚀 | Dock shortcuts configured |
 | 👆 | Chrome Wayland touchpad gestures |
-| 🌌 | NASA wallpaper applied automatically |
+| 🌌 | Lighthouse sunset wallpaper applied automatically |
 
 ---
 
@@ -236,3 +239,6 @@ Writes `--ozone-platform=wayland` and `--enable-features=TouchpadOverscrollHisto
 - 🛡️ **Non-blocking** — `try()` wraps every command; failures log warnings and never abort
 </details>
 
+---
+
+*Made with ❤️ for Fedora users*
