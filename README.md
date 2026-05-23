@@ -101,7 +101,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🎬 Multimedia | VLC, Audacity, Darktable, Handbrake, EasyEffects, OBS Studio |
 | 🎨 Graphics / 3D | GIMP, Inkscape, Blender |
 | 🎮 Gaming | Steam |
-| 🖥️ GNOME Apps | Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Snapshot, Characters, Connections, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, **File Roller** |
+| 🖥️ GNOME Apps | Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Snapshot, Characters, Connections, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, **Drawing** |
 | 🔧 Utilities | Timeshift, Solaar, fastfetch, pipx, DreamChess, lm_sensors, Deskflow |
 | 🛡️ VPN | **NordVPN** CLI + GUI (official installer, daemon enabled, user added to group) |
 | 📝 Office | FreeOffice 2024 (official SoftMaker installer) |
