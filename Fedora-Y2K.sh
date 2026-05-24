@@ -320,19 +320,12 @@ install_flatpaks() {
 # Auto-detects GPU — installs only if found
 # Filters by VGA/3D/Display to avoid false positives
 # ─────────────────────────────────────────────
-install_nvidia() {
-  info "[NVIDIA] Detecting GPU"
 
-  # Precise filter using PCI class codes:
-  #   0300 = VGA, 0302 = 3D controller, 0380 = Display controller
-  if ! lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi nvidia; then
-    warning "No NVIDIA GPU detected. Skipping driver installation."
-    return
-  fi
-
-  GPU_INFO="$(lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -i nvidia | head -1)"
-  ok "NVIDIA GPU detected: $GPU_INFO"
-
+# ─────────────────────────────────────────────
+# NVIDIA — internal install logic
+# Called by install_nvidia() after detection/confirmation
+# ─────────────────────────────────────────────
+_nvidia_do_install() {
   # Secure Boot warning
   if command -v mokutil &>/dev/null && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
     warning "Secure Boot is ENABLED."
@@ -390,6 +383,52 @@ install_nvidia() {
 
   ok "NVIDIA driver installed. Reboot to load the kernel module."
 }
+
+# ─────────────────────────────────────────────
+# NVIDIA + CUDA
+# Auto-detects GPU — when called from run_all, skips if not found.
+# When called from menu [6], offers to force install if not detected
+# (useful when booting with onboard GPU while NVIDIA card is present).
+# ─────────────────────────────────────────────
+install_nvidia() {
+  local mode="${1:-auto}"  # "auto" (run_all) or "menu" (manual option [6])
+
+  info "[NVIDIA] Detecting GPU"
+
+  # Precise filter using PCI class codes:
+  #   0300 = VGA, 0302 = 3D controller, 0380 = Display controller
+  if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi nvidia; then
+    GPU_INFO="$(lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -i nvidia | head -1)"
+    ok "NVIDIA GPU detected: $GPU_INFO"
+    _nvidia_do_install
+    return
+  fi
+
+  # GPU not detected
+  if [[ "$mode" == "auto" ]]; then
+    # Called from run_all — skip silently, user can run [6] manually after
+    warning "No NVIDIA GPU detected. Skipping."
+    warning "If your NVIDIA card is present but you booted with onboard GPU,"
+    warning "run option [6] from the menu after this setup to install the driver."
+    return
+  fi
+
+  # Called from menu [6] — explain and offer to force install
+  echo
+  warning "No NVIDIA GPU detected via lspci."
+  echo -e "  ${CYAN}This can happen when your system is booting with the onboard/integrated"
+  echo -e "  GPU while the NVIDIA card is installed but not active.${NC}"
+  echo -e "  ${CYAN}Typical fix: install the driver now → reboot → switch to NVIDIA in BIOS.${NC}"
+  echo
+  read -rp "  Force NVIDIA driver installation anyway? [y/N]: " FORCE_CONFIRM
+  if [[ "${FORCE_CONFIRM,,}" == "y" ]]; then
+    warning "Proceeding without GPU confirmation — ensure RPM Fusion repo is added first."
+    _nvidia_do_install
+  else
+    ok "Skipping NVIDIA driver installation."
+  fi
+}
+
 
 # ─────────────────────────────────────────────
 # GNOME EXTENSIONS
@@ -735,7 +774,7 @@ run_all() {
   install_rpms        # Installs everything (including codecs)
   install_freeoffice  # FreeOffice before removing LibreOffice
   install_flatpaks
-  install_nvidia      # Auto-detects — skips if no NVIDIA GPU found
+  install_nvidia auto  # Auto-detects — laptops with NVIDIA are always detected via lspci
   install_gnome_extensions
   remove_bloat        # Removes LibreOffice and bloat AFTER installing everything
   apply_settings      # Visual settings + default apps
@@ -767,7 +806,7 @@ while true; do
     3) remove_bloat ;;
     4) add_repos; install_rpms ;;
     5) install_flatpaks ;;
-    6) add_repos; install_nvidia ;;
+    6) add_repos; install_nvidia menu ;;
     7) install_gnome_extensions ;;
     8) apply_settings ;;
     9) verify_final ;;
