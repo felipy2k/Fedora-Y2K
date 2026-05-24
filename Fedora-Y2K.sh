@@ -297,6 +297,7 @@ install_flatpaks() {
     com.motrix.Motrix                       # Download manager
 
     # Entertainment / Sound / Other
+    com.discordapp.Discord                  # Discord
     com.rafaelmardojai.Blanket              # Ambient sounds
     de.haeckerfelix.Shortwave               # Internet radio
     org.gnome.Podcasts                      # Podcasts
