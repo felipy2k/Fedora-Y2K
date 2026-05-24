@@ -22,6 +22,39 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 
 ---
 
+## 💾 Disk Space Requirements
+
+> Sizes reflect **installed size on disk**, not download size.  
+> Flatpak runtimes (GNOME, KDE) are shared between apps and counted once.
+
+| 🗂️ Component | 💿 Size | 📝 Notes |
+|---|---|---|
+| 🎬 Codecs (ffmpeg + GStreamer stack) | ~25 MB | |
+| 🌐 Browsers (Chrome + Firefox + Tor) | ~350 MB | |
+| 🎥 Multimedia apps (VLC, Audacity, Darktable, Handbrake, EasyEffects, OBS) | ~300 MB | |
+| 🎨 Graphics / 3D (GIMP, Inkscape, Blender) | ~500 MB | Blender alone is ~300 MB |
+| 🖥️ GNOME apps + Utilities | ~300 MB | |
+| 🖼️ Papirus icon theme | ~195 MB | Large — hundreds of icon variants |
+| 📝 FreeOffice 2024 | ~700 MB | |
+| 🎮 Steam (RPM package) | ~2 MB | Tiny package — bootstraps on first launch |
+| 🎮 Steam runtime (downloaded on first launch) | ~1.5 GB | Downloaded by Steam itself, not by the script |
+| 📱 Flatpaks (25 apps + GNOME/KDE runtimes) | ~3.5 GB | Largest single component |
+| 🟢 NVIDIA driver (akmod + libs) | ~250 MB | Only if NVIDIA GPU present |
+| 🧪 CUDA Toolkit (nvcc, cuBLAS, headers) | ~4.0 GB | **Optional** — prompted during install |
+
+### Totals
+
+| 🗂️ Scenario | 💿 Disk Used | 💡 Recommended Free Space |
+|---|---|---|
+| Base (RPMs + FreeOffice + Flatpaks, no Steam runtime) | ~5.5 GB | **8 GB** |
+| + Steam runtime (typical gaming setup) | ~7.0 GB | **10 GB** |
+| + NVIDIA driver | ~7.3 GB | **10 GB** |
+| + CUDA Toolkit | ~11.3 GB | **15 GB** |
+
+> ⚠️ The script checks for **15 GB free** before running option **[1] Run EVERYTHING** — this safely covers the full scenario including CUDA. If you are skipping CUDA, 10 GB is sufficient.
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
