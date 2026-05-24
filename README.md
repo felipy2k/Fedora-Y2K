@@ -90,6 +90,9 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 - 🔨 Builds kernel module (`akmods --force`) + regenerates initramfs (`dracut --force`)
 - ⚡ Enables power services: `nvidia-hibernate`, `nvidia-resume`, `nvidia-suspend`
 - 🧪 Optional: full CUDA Toolkit (`nvcc`, cuBLAS, headers) via official NVIDIA repo
+- 🖥️ **Smart detection modes:**
+  - **Run EVERYTHING `[1]`** — auto-detects; installs if found, skips silently if not (laptops with Optimus always detected)
+  - **Option `[6]`** — if GPU not detected, explains the onboard-boot scenario and offers to **force install** — use this when booting with integrated GPU while NVIDIA card is present (install driver → reboot → switch to NVIDIA in BIOS)
 
 ---
 
@@ -203,6 +206,9 @@ When Fedora releases a system update and RPM Fusion hasn't yet published the mat
 <summary>🟢 NVIDIA + Secure Boot</summary>
 
 If Secure Boot is enabled, the script detects it and prompts for confirmation. After installation, the `akmod` module must be manually signed. See: [RPM Fusion — Secure Boot](https://rpmfusion.org/Howto/Secure%20Boot)
+
+**Desktop with onboard + NVIDIA card:**  
+If you boot with the integrated/onboard GPU active, the NVIDIA card won't appear in `lspci` and `[1] Run EVERYTHING` will skip the driver. Use option **`[6]`** instead — it detects this scenario, explains it, and offers to force install. After that: reboot → switch to NVIDIA in BIOS → done.
 </details>
 
 <details>
