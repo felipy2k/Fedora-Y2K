@@ -249,7 +249,7 @@ install_freeoffice() {
   # Check connectivity before attempting curl | bash
   if ! curl -fsSL --max-time 5 -o /dev/null https://softmaker.net/down/install-softmaker-freeoffice-2024.sh 2>/dev/null; then
     warning "Cannot reach softmaker.net — skipping FreeOffice installation."
-    warning "Run option [4] later when connected, or install manually:"
+    warning "Install manually when connected:"
     echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
     return
   fi
@@ -315,12 +315,6 @@ install_flatpaks() {
     try flatpak install -y flathub "$app"
   done
 }
-
-# ─────────────────────────────────────────────
-# NVIDIA + CUDA
-# Auto-detects GPU — installs only if found
-# Filters by VGA/3D/Display to avoid false positives
-# ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
 # NVIDIA — internal install logic
@@ -671,7 +665,7 @@ verify_final() {
   echo
   echo -e "${BOLD}── RPM packages that should exist ──${NC}"
   rpm -qa | grep -E \
-    "google-chrome-stable|firefox|^vlc|audacity|darktable|handbrake|inkscape|easyeffects|^gimp|^blender|^steam|^dreamchess|^nordvpn|^deskflow|obs-studio|gnome-software|papirus|softmaker|freeoffice|^solaar|timeshift|deja-dup" \
+    "google-chrome-stable|firefox|^vlc|audacity|darktable|handbrake|inkscape|easyeffects|^gimp|^blender|^steam|^dreamchess|^nordvpn|^deskflow|^drawing|file-roller|obs-studio|gnome-software|papirus|softmaker|freeoffice|^solaar|timeshift|deja-dup" \
     2>/dev/null || warning "Some RPM packages may not be installed."
 
   echo
@@ -700,7 +694,7 @@ verify_final() {
   echo
   echo -e "${BOLD}── Installed Flatpaks ──${NC}"
   flatpak list --app --columns=application 2>/dev/null | grep -E \
-    "Alpaca|Resources|Flatseal|Blanket|Raider|FreeCAD|Upscayl|Shotcut|VideoTrimmer|cameractrls|converseen|nokse22.Exhibit|Minder|Motrix|localsend|Podcasts|Popsicle|Shortwave|sticky|Converter|ExtensionManager|PodmanDesktop" \
+    "Alpaca|Resources|Flatseal|Blanket|Raider|FreeCAD|Upscayl|Shotcut|VideoTrimmer|cameractrls|converseen|nokse22.Exhibit|Minder|Motrix|localsend|Podcasts|Popsicle|Shortwave|sticky|Converter|ExtensionManager|PodmanDesktop|Discord" \
     || warning "Some expected Flatpaks may not be installed."
 
   echo
