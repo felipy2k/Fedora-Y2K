@@ -434,7 +434,6 @@ install_gnome_extensions() {
     caffeine@patapon.info                               # Caffeine (prevent suspend)
     clipboard-indicator@tudmotu.com                     # Clipboard Indicator (clipboard manager)
     dash-to-dock@micxgx.gmail.com                       # Dash to Dock
-    editdesktopfiles@dannflower                         # Edit Desktop Files
     gsconnect@andyholmes.github.io                      # GSConnect (KDE Connect for GNOME)
     just-perfection-desktop@just-perfection             # Just Perfection (GNOME Shell tweaker)
     tilingshell@ferrarodomenico.com                     # Tiling Shell
