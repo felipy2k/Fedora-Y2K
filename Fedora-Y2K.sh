@@ -417,9 +417,9 @@ install_nvidia() {
   # GPU not detected — ask to force install
   # Useful when booting with onboard GPU (desktop) or pre-installing for a future card
   echo
-  echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${RED}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
-  echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
+  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
   echo
   echo -e "${YELLOW}  No NVIDIA GPU was detected via lspci.${NC}"
   echo
