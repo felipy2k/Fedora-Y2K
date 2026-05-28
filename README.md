@@ -64,6 +64,7 @@ bash Fedora-Y2K.sh
 ```
 
 > ⚠️ **Do not run as root.** The script uses `sudo` internally where needed.
+> 🖥️ **Run it from inside your GNOME session** (a terminal in the desktop), not over SSH or a bare TTY — the visual steps need a graphical session.
 
 ---
 
@@ -71,19 +72,19 @@ bash Fedora-Y2K.sh
 
 ```
 ╔═══════════════════════════════════════════════════════════════╗
-║          Fedora — Custom Post-Install Setup                   ║
+║          Fedora - Custom Post-Install Setup                   ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  [1] Run EVERYTHING (recommended)                            ║
-║  [2] Update system only                                      ║
-║  [3] Remove bloatware only                                   ║
-║  [4] Install RPM packages only                               ║
-║  [5] Install Flatpaks only                                   ║
-║  [6] Install NVIDIA driver + CUDA only                       ║
-║  [7] Install GNOME extensions only                           ║
-║  [8] Apply visual settings only                              ║
-║  [9] Final verification                                      ║
-║  [0] Exit                                                    ║
-║  [r] Exit and reboot                                         ║
+║  [1] Run EVERYTHING (recommended)                             ║
+║  [2] Update system only                                       ║
+║  [3] Remove bloatware only                                    ║
+║  [4] Install RPM packages only                                ║
+║  [5] Install Flatpaks only                                    ║
+║  [6] Install NVIDIA driver + CUDA only                        ║
+║  [7] Install GNOME extensions only                            ║
+║  [8] Apply visual settings only                               ║
+║  [9] Final verification                                       ║
+║  [0] Exit                                                     ║
+║  [r] Exit and reboot the system                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
 
@@ -170,6 +171,8 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | Tiling Shell | Window tiling manager |
 | Vitals | CPU, RAM, temp, fan, network in panel (uses `lm_sensors`) |
 
+> ℹ️ After installing, **log out and back in (or reboot)** to activate the extensions — on Wayland, GNOME Shell does not reload them live. A few may need a compatibility update before they load on GNOME 50.
+
 ---
 
 ### 🎯 Default Apps & Settings
@@ -221,6 +224,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🐧 | Fedora Workstation **41 or later** (optimized for Fedora 44 + GNOME 50) |
 | 🌐 | Internet connection |
 | 🔑 | User account with `sudo` access |
+| 🖥️ | Run from inside a graphical (GNOME) session — not SSH/TTY |
 | 💾 | ~15 GB free disk space (Steam + Blender + CUDA) |
 
 ---
@@ -262,19 +266,33 @@ GNOME's system-level `gnome-mimeapps.list` can override user settings. The scrip
 <details>
 <summary>👆 Chrome touchpad gestures</summary>
 
-Writes `--ozone-platform=wayland` and `--enable-features=TouchpadOverscrollHistoryNavigation` to `~/.config/chrome-flags.conf` and a user-level `.desktop` copy. Idempotent — safe to re-run.
+Two complementary mechanisms apply `--ozone-platform=wayland` and `--enable-features=TouchpadOverscrollHistoryNavigation`:
+
+1. **`~/.config/chrome-flags.conf`** — read by the launcher wrappers of several Chrome/Chromium packagings (and covers command-line launches). Harmless if a given build ignores it.
+2. **A user-level `.desktop` copy** with the flags added to its `Exec=` line — reliably applies them when Chrome is opened from the dock or app grid.
+
+Idempotent — safe to re-run.
+</details>
+
+<details>
+<summary>🖥️ Graphical session required for visual steps</summary>
+
+The visual steps — **[8] Apply visual settings** and **[7] Install GNOME extensions** — depend on a running user D-Bus session (`gsettings`, `dconf`, `gext`). If you run the script over SSH or a bare TTY, those steps detect the missing session and **skip with a clear message** instead of flooding the log with errors. Run them from a terminal inside your GNOME session (the heavy installs in `run_all` still work fine either way).
 </details>
 
 <details>
 <summary>🛡️ Reliability & recovery</summary>
 
 - 📋 **Logging** — timestamped log saved to `~/fedora-y2k-YYYYMMDD-HHMMSS.log`
-- 🔒 **Grouped installs** — 7 independent RPM groups; failures are isolated and visible
+- 🔑 **Sudo keepalive** — authenticates once, then refreshes the `sudo` timestamp in the background so long installs never pause for a password mid-run
+- 🖥️ **Session-aware** — visual steps skip cleanly when no graphical session is present (SSH/TTY)
+- 🔒 **Grouped installs** — independent RPM groups; failures are isolated and visible
 - 💾 **Package backup** — full RPM list saved before bloat removal
 - 💿 **Disk space check** — warns if less than 15 GB free
+- 🐧 **Kernel cap** — keeps only 2 old kernels (`installonly_limit=2`) to save `/boot` space
 - 📊 **Final summary** — total warnings + log path
 - 🔄 **Idempotent** — safe to re-run; already-applied changes are detected and skipped
-- 🛡️ **Non-blocking** — `try()` wraps every command; failures log warnings and never abort
+- 🚫 **Non-blocking** — every step is wrapped so a single failure logs a warning and never aborts the run
 </details>
 
 ---
