@@ -38,7 +38,7 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 | 📝 FreeOffice 2024 | ~700 MB | |
 | 🎮 Steam (RPM package) | ~2 MB | Tiny package — bootstraps on first launch |
 | 🎮 Steam runtime (downloaded on first launch) | ~1.5 GB | Downloaded by Steam itself, not by the script |
-| 📱 Flatpaks (25 apps + GNOME/KDE runtimes) | ~3.5 GB | Largest single component |
+| 📱 Flatpaks (24 apps + GNOME/KDE runtimes) | ~3.5 GB | Largest single component |
 | 🟢 NVIDIA driver (akmod + libs) | ~250 MB | Only if NVIDIA GPU present |
 | 🧪 CUDA Toolkit (nvcc, cuBLAS, headers) | ~4.0 GB | **Optional** — prompted during install |
 
@@ -136,7 +136,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🎬 Multimedia | VLC, Audacity, Darktable, Handbrake, EasyEffects, OBS Studio |
 | 🎨 Graphics / 3D | GIMP, Inkscape, Blender |
 | 🎮 Gaming | Steam |
-| 🖥️ GNOME Apps | Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Snapshot, Characters, Connections, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, **Drawing** |
+| 🖥️ GNOME Apps | Files (Nautilus), Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Snapshot, Characters, Connections, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, ABRT, **Drawing** |
 | 🔧 Utilities | Timeshift, Solaar, fastfetch, pipx, DreamChess, lm_sensors, Deskflow |
 | 🛡️ VPN | **NordVPN** CLI + GUI (official installer, daemon enabled, user added to group) |
 | 📝 Office | FreeOffice 2024 (official SoftMaker installer) |
@@ -165,7 +165,6 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | Caffeine | Prevent sleep/suspend |
 | Clipboard Indicator | Clipboard history manager |
 | Dash to Dock | Persistent app dock |
-| Edit Desktop Files | Edit `.desktop` files from the app grid |
 | GSConnect | KDE Connect integration for GNOME |
 | Just Perfection | Fine-tune GNOME Shell elements |
 | Tiling Shell | Window tiling manager |
