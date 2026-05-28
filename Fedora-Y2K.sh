@@ -10,12 +10,13 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
-BLUE='\033[0;34m'
+BLUE='\033[1;94m'
 BOLD='\033[1m'
 NC='\033[0m'
 
 info()    { echo -e "\n${GREEN}▶ $*${NC}"; }
 step()    { echo -e "  ${CYAN}→ $*${NC}"; }
+note()    { echo -e "  ${CYAN}ℹ $*${NC}"; }
 warning() { echo -e "  ${YELLOW}⚠ $*${NC}"; ((WARN_COUNT++)) || true; }
 fail()    { echo -e "${RED}✗ $*${NC}"; }
 ok()      { echo -e "  ${GREEN}✓ $*${NC}"; }
@@ -23,17 +24,54 @@ ok()      { echo -e "  ${GREEN}✓ $*${NC}"; }
 # Counter to summarize warnings at the end
 WARN_COUNT=0
 
-# Robust try() — works correctly with set -e/pipefail by toggling it locally.
-# Returns 0 always, so a failure inside try() never aborts the script.
+# Robust try() — runs a command, logs a warning if it fails, and always
+# returns 0 so a failure inside try() never aborts the script.
+# NOTE: the script intentionally does NOT use `set -e`. The previous local
+# `set +e / set -e` toggle was removed because it left `-e` ENABLED after
+# every try() call, which could silently abort the script on the next
+# unguarded command. With no global `-e`, the toggle was unnecessary.
 try() {
-  set +e
   "$@"
   local rc=$?
-  set -e
   if [[ $rc -ne 0 ]]; then
     warning "Failed (exit $rc), continuing: $*"
   fi
   return 0
+}
+
+# ─────────────────────────────────────────────
+# SUDO KEEPALIVE
+# Validate sudo once and keep the timestamp fresh in the background so long
+# install steps never pause to ask for the password again. Started lazily,
+# only when a privileged action is actually chosen.
+# ─────────────────────────────────────────────
+SUDO_KEEPALIVE_PID=""
+ensure_sudo() {
+  if ! sudo -v; then
+    fail "sudo authentication failed."
+    return 1
+  fi
+  if [[ -z "$SUDO_KEEPALIVE_PID" ]]; then
+    ( while kill -0 "$$" 2>/dev/null; do sudo -n true 2>/dev/null; sleep 60; done ) &>/dev/null &
+    SUDO_KEEPALIVE_PID=$!
+  fi
+  return 0
+}
+
+cleanup() {
+  [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
+
+# ─────────────────────────────────────────────
+# GRAPHICAL SESSION DETECTION
+# gsettings, dconf and `gext enable` all require a running user D-Bus session.
+# Running over SSH or a bare TTY would otherwise produce a flood of confusing
+# errors, so the visual steps are skipped (with a clear message) in that case.
+# ─────────────────────────────────────────────
+has_gui_session() {
+  [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || [[ -S "/run/user/${UID}/bus" ]]
 }
 
 if [[ "$EUID" -eq 0 ]]; then
@@ -45,23 +83,27 @@ FEDORA_VER="$(rpm -E %fedora)"
 
 show_menu() {
   clear
+  local W=63
+  local bar
+  printf -v bar '%*s' "$W" ''
+  bar=${bar// /═}
   echo -e "${BOLD}${BLUE}"
-  echo "╔═══════════════════════════════════════════════════════════════╗"
-  echo "║          Fedora — Custom Post-Install Setup                   ║"
-  echo "║          User: ${USER}                                        ║"
-  echo "╠═══════════════════════════════════════════════════════════════╣"
-  echo "║  [1] Run EVERYTHING (recommended)                            ║"
-  echo "║  [2] Update system only                                      ║"
-  echo "║  [3] Remove bloatware only                                   ║"
-  echo "║  [4] Install RPM packages only                               ║"
-  echo "║  [5] Install Flatpaks only                                   ║"
-  echo "║  [6] Install NVIDIA driver + CUDA only                       ║"
-  echo "║  [7] Install GNOME extensions only                           ║"
-  echo "║  [8] Apply visual settings only                              ║"
-  echo "║  [9] Final verification                                      ║"
-  echo "║  [0] Exit                                                    ║"
-  echo "║  [r] Exit and reboot the system                              ║"
-  echo "╚═══════════════════════════════════════════════════════════════╝"
+  echo "╔${bar}╗"
+  printf "║%-${W}s║\n" "          Fedora - Custom Post-Install Setup"
+  printf "║%-${W}s║\n" "          User: ${USER}"
+  echo "╠${bar}╣"
+  printf "║%-${W}s║\n" "  [1] Run EVERYTHING (recommended)"
+  printf "║%-${W}s║\n" "  [2] Update system only"
+  printf "║%-${W}s║\n" "  [3] Remove bloatware only"
+  printf "║%-${W}s║\n" "  [4] Install RPM packages only"
+  printf "║%-${W}s║\n" "  [5] Install Flatpaks only"
+  printf "║%-${W}s║\n" "  [6] Install NVIDIA driver + CUDA only"
+  printf "║%-${W}s║\n" "  [7] Install GNOME extensions only"
+  printf "║%-${W}s║\n" "  [8] Apply visual settings only"
+  printf "║%-${W}s║\n" "  [9] Final verification"
+  printf "║%-${W}s║\n" "  [0] Exit"
+  printf "║%-${W}s║\n" "  [r] Exit and reboot the system"
+  echo "╚${bar}╝"
   echo -e "${NC}"
   read -rp "  Choose an option: " CHOICE
 }
@@ -78,7 +120,7 @@ add_repos() {
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm"
 
   step "Enabling RPM Fusion AppStream metadata for GNOME Software"
-  try sudo dnf install -y rpmfusion-free-release-tainted rpmfusion-nonfree-release-tainted 2>/dev/null || true
+  try sudo dnf install -y rpmfusion-free-release-tainted rpmfusion-nonfree-release-tainted
 
   step "Enabling fedora-cisco-openh264 repo (required for Firefox/WebRTC)"
   try sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1
@@ -103,8 +145,10 @@ EOF
 # ─────────────────────────────────────────────
 update_system() {
   info "[SYSTEM] Updating system"
-  # Keep only 2 old kernels to save disk space
-  try sudo sed -i 's/^installonly_limit=.*/installonly_limit=2/' /etc/dnf/dnf.conf
+  # Keep only 2 old kernels to save disk space.
+  # Uses config-manager setopt (DNF5) so it works whether or not the line
+  # already exists in dnf.conf — the old `sed` no-op'd when the line was absent.
+  try sudo dnf config-manager setopt installonly_limit=2
   try sudo dnf upgrade --refresh -y
 }
 
@@ -447,6 +491,13 @@ install_nvidia() {
 install_gnome_extensions() {
   info "[EXTENSIONS] Installing GNOME extensions"
 
+  if ! has_gui_session; then
+    warning "No graphical session detected (no D-Bus session bus)."
+    warning "GNOME extensions need a running GNOME session to install and enable."
+    warning "Run option [7] from inside your GNOME session (not over SSH/TTY). Skipping."
+    return
+  fi
+
   export PATH="$HOME/.local/bin:$PATH"
 
   if ! command -v gext &>/dev/null; then
@@ -478,7 +529,9 @@ install_gnome_extensions() {
       try gext install "$ext"
       try gext enable "$ext"
     done
-    ok "Extensions installed. Some may show errors until the next GNOME Shell update."
+    ok "Extensions installed."
+    note "Log out and back in (or reboot) to activate them — on Wayland, GNOME Shell does not reload extensions live."
+    note "Some extensions may need a compatibility update before they load on GNOME 50."
   else
     warning "gext not available. Install manually via Extension Manager."
     echo "  Required extensions:"
@@ -538,7 +591,9 @@ remove_bloat() {
     qjackctl
 
   step "Removing unnecessary Flatpaks"
-  try flatpak uninstall -y \
+  # These may not be installed; ignore failures silently (no try() so the
+  # "not installed" case doesn't inflate the warning count).
+  flatpak uninstall -y \
     org.gnome.Showtime \
     org.gnome.Decibels \
     org.gnome.Totem \
@@ -558,6 +613,13 @@ remove_bloat() {
 # ─────────────────────────────────────────────
 apply_settings() {
   info "[SETTINGS] Applying GNOME settings and default apps"
+
+  if ! has_gui_session; then
+    warning "No graphical session detected (no D-Bus session bus)."
+    warning "Visual settings rely on gsettings/gio and must run inside your GNOME session."
+    warning "Run option [8] from a terminal inside GNOME (not over SSH/TTY). Skipping."
+    return
+  fi
 
   # ── Appearance ──
   try gsettings set org.gnome.desktop.interface icon-theme         'Papirus'
@@ -635,6 +697,13 @@ apply_settings() {
   fi
 
   # ── Chrome: Wayland + touchpad two-finger back/forward gestures ──
+  # Two complementary mechanisms (belt and suspenders) for the same two flags:
+  #   1. ~/.config/chrome-flags.conf — read by the launcher wrappers of several
+  #      Chrome/Chromium packagings (Arch's google-chrome, Flatpak, Chromium).
+  #      The official Google RPM may ignore it, but writing it is harmless and
+  #      also covers launches from the command line.
+  #   2. Patching the Exec= line of a user-level .desktop copy — this reliably
+  #      applies the flags when Chrome is opened from the dock or app grid.
   step "Configuring Chrome for Wayland touchpad gestures"
 
   FLAGS_FILE="$HOME/.config/chrome-flags.conf"
@@ -776,6 +845,10 @@ run_all() {
   read -rp "Confirm? [y/N]: " CONFIRM
   [[ "${CONFIRM,,}" != "y" ]] && { warning "Cancelled."; return; }
 
+  # Authenticate sudo up front (and keep it alive) so the long install
+  # never pauses for a password halfway through.
+  ensure_sudo || { warning "Cannot proceed without sudo authentication."; return; }
+
   # Reset warning counter for clean final summary
   WARN_COUNT=0
 
@@ -812,11 +885,11 @@ while true; do
 
   case "$CHOICE" in
     1) run_all ;;
-    2) add_repos; update_system ;;
-    3) remove_bloat ;;
-    4) add_repos; install_rpms ;;
+    2) ensure_sudo && { add_repos; update_system; } ;;
+    3) ensure_sudo && remove_bloat ;;
+    4) ensure_sudo && { add_repos; install_rpms; } ;;
     5) install_flatpaks ;;
-    6) add_repos; install_nvidia ;;
+    6) ensure_sudo && { add_repos; install_nvidia; } ;;
     7) install_gnome_extensions ;;
     8) apply_settings ;;
     9) verify_final ;;
