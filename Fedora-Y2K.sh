@@ -392,20 +392,49 @@ install_nvidia() {
   #   0300 = VGA, 0302 = 3D controller, 0380 = Display controller
   if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi nvidia; then
     GPU_INFO="$(lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -i nvidia | head -1)"
+    echo
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo
     ok "NVIDIA GPU detected: $GPU_INFO"
+    echo
+    echo -e "${YELLOW}  The NVIDIA driver will now be installed.${NC}"
+    echo -e "${YELLOW}  This process takes several minutes and requires a REBOOT.${NC}"
+    echo
+    echo -e "${RED}  ▶ To confirm, type  yes  and press ENTER${NC}"
+    echo -e "${RED}  ▶ To skip,    type  no   and press ENTER${NC}"
+    echo
+    read -rp "  Install NVIDIA driver? [yes/no]: " GPU_CONFIRM
+    if [[ "${GPU_CONFIRM,,}" != "yes" ]]; then
+      ok "Skipping NVIDIA driver installation."
+      return
+    fi
     _nvidia_do_install
     return
   fi
 
   # GPU not detected — ask to force install
   # Useful when booting with onboard GPU (desktop) or pre-installing for a future card
-  warning "No NVIDIA GPU detected via lspci."
-  echo -e "  ${CYAN}This can happen when:"
-  echo -e "  • Booting with onboard/integrated GPU while NVIDIA card is present"
-  echo -e "  • Installing the driver before the card is physically installed${NC}"
   echo
-  read -rp "  Install NVIDIA driver anyway? [y/N]: " FORCE_CONFIRM
-  if [[ "${FORCE_CONFIRM,,}" == "y" ]]; then
+  echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${RED}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
+  echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+  echo
+  echo -e "${YELLOW}  No NVIDIA GPU was detected via lspci.${NC}"
+  echo
+  echo -e "${CYAN}  This is expected if you are:${NC}"
+  echo -e "${CYAN}  • Booting with onboard/integrated GPU while NVIDIA card is present${NC}"
+  echo -e "${CYAN}  • Pre-installing the driver before the card is physically installed${NC}"
+  echo
+  echo -e "${YELLOW}  Only proceed if you are SURE you have an NVIDIA GPU.${NC}"
+  echo -e "${YELLOW}  If unsure, press N and skip this step.${NC}"
+  echo
+  echo -e "${RED}  ▶ To confirm, type  yes  and press ENTER${NC}"
+  echo -e "${RED}  ▶ To skip,    type  no   and press ENTER${NC}"
+  echo
+  read -rp "  Install NVIDIA driver? [yes/no]: " FORCE_CONFIRM
+  if [[ "${FORCE_CONFIRM,,}" == "yes" ]]; then
     _nvidia_do_install
   else
     ok "Skipping NVIDIA driver installation."
