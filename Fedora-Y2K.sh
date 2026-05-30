@@ -95,12 +95,13 @@ show_menu() {
   printf "║%-${W}s║\n" "  [1] Run EVERYTHING (recommended)"
   printf "║%-${W}s║\n" "  [2] Update system only"
   printf "║%-${W}s║\n" "  [3] Remove bloatware only"
-  printf "║%-${W}s║\n" "  [4] Install RPM packages only"
+  printf "║%-${W}s║\n" "  [4] Install RPM packages + FreeOffice"
   printf "║%-${W}s║\n" "  [5] Install Flatpaks only"
   printf "║%-${W}s║\n" "  [6] Install NVIDIA driver + CUDA only"
   printf "║%-${W}s║\n" "  [7] Install GNOME extensions only"
   printf "║%-${W}s║\n" "  [8] Apply visual settings only"
   printf "║%-${W}s║\n" "  [9] Final verification"
+  printf "║%-${W}s║\n" "  [f] Install FreeOffice only"
   printf "║%-${W}s║\n" "  [0] Exit"
   printf "║%-${W}s║\n" "  [r] Exit and reboot the system"
   echo "╚${bar}╝"
@@ -887,12 +888,13 @@ while true; do
     1) run_all ;;
     2) ensure_sudo && { add_repos; update_system; } ;;
     3) ensure_sudo && remove_bloat ;;
-    4) ensure_sudo && { add_repos; install_rpms; } ;;
+    4) ensure_sudo && { add_repos; install_rpms; install_freeoffice; } ;;
     5) install_flatpaks ;;
     6) ensure_sudo && { add_repos; install_nvidia; } ;;
     7) install_gnome_extensions ;;
     8) apply_settings ;;
     9) verify_final ;;
+    f|F) ensure_sudo && install_freeoffice ;;
     0) echo "Exiting."; exit 0 ;;
     r|R) echo "Rebooting..."; sudo reboot ;;
     *) warning "Invalid option." ;;
