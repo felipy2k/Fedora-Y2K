@@ -77,12 +77,13 @@ bash Fedora-Y2K.sh
 ║  [1] Run EVERYTHING (recommended)                             ║
 ║  [2] Update system only                                       ║
 ║  [3] Remove bloatware only                                    ║
-║  [4] Install RPM packages only                                ║
+║  [4] Install RPM packages + FreeOffice                        ║
 ║  [5] Install Flatpaks only                                    ║
 ║  [6] Install NVIDIA driver + CUDA only                        ║
 ║  [7] Install GNOME extensions only                            ║
 ║  [8] Apply visual settings only                               ║
 ║  [9] Final verification                                       ║
+║  [f] Install FreeOffice only                                  ║
 ║  [0] Exit                                                     ║
 ║  [r] Exit and reboot the system                               ║
 ╚═══════════════════════════════════════════════════════════════╝
