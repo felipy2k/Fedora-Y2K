@@ -1,17 +1,17 @@
 # 🐧 Fedora Y2K — Post-Install Setup Script
 
-> An interactive post-installation script for **Fedora Workstation 41+**, optimized for **Fedora 44 + GNOME 50**.  
+> An interactive post-installation script for **Fedora Workstation**, configured for **Fedora 44 + GNOME 50**.
 > Automates everything from repositories and codecs to drivers, apps, extensions, and visual settings — through a clean modular menu.
 
 ---
 
-## ⚠️ Before you start — Disable Secure Boot
+## ⚠️ Before you start — NVIDIA and Secure Boot
 
-**Secure Boot must be disabled in your BIOS/UEFI before running this script.**
+**For NVIDIA installation, configure module signing or disable Secure Boot in your BIOS/UEFI.**
 
-The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to work with Secure Boot enabled. If you skip this step, the system may boot without GPU acceleration or fail to load the driver entirely.
+The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to work with Secure Boot enabled. The script detects Secure Boot and asks whether to continue; it does not sign the module automatically.
 
-> 💡 **How to disable Secure Boot:**
+> 💡 **If you choose to disable Secure Boot:**
 > 1. Restart your computer and enter BIOS/UEFI (usually `F2`, `F10`, `F12` or `Del` during boot)
 > 2. Navigate to the **Security** or **Boot** tab
 > 3. Find **Secure Boot** and set it to **Disabled**
@@ -24,42 +24,26 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 
 ## 💾 Disk Space Requirements
 
-> Sizes reflect **installed size on disk**, not download size.  
-> Flatpak runtimes (GNOME, KDE) are shared between apps and counted once.
+> Required space depends on the selected applications, package versions and shared Flatpak runtimes.
 
-| 🗂️ Component | 💿 Size | 📝 Notes |
-|---|---|---|
-| 🎬 Codecs (ffmpeg + GStreamer stack) | ~25 MB | |
-| 🌐 Browsers (Chrome + Firefox + Tor) | ~350 MB | |
-| 🎥 Multimedia apps (VLC, Audacity, Darktable, Handbrake, EasyEffects, OBS) | ~300 MB | |
-| 🎨 Graphics / 3D (GIMP, Inkscape, Blender) | ~500 MB | Blender alone is ~300 MB |
-| 🖥️ GNOME apps + Utilities | ~300 MB | |
-| 🖼️ Papirus icon theme | ~195 MB | Large — hundreds of icon variants |
-| 📝 FreeOffice 2024 | ~700 MB | |
-| 🎮 Steam (RPM package) | ~2 MB | Tiny package — bootstraps on first launch |
-| 🎮 Steam runtime (downloaded on first launch) | ~1.5 GB | Downloaded by Steam itself, not by the script |
-| 📱 Flatpaks (24 apps + GNOME/KDE runtimes) | ~3.5 GB | Largest single component |
-| 🟢 NVIDIA driver (akmod + libs) | ~250 MB | Only if NVIDIA GPU present |
-| 🧪 CUDA Toolkit (nvcc, cuBLAS, headers) | ~4.0 GB | **Optional** — prompted during install |
+| 🗂️ Component | 📝 Storage notes |
+|---|---|
+| 📦 RPM apps, codecs and themes | Allow space for packages and dependencies |
+| 🤖 ChatGPT | Approximately 1.7 GB installed on the reference PC |
+| 🖱️ OpenLogi | Approximately 84 MB installed on the reference PC |
+| 📱 Flatpaks | 27 apps plus shared GNOME/KDE runtimes |
+| 🎮 Steam | Runtime and games require additional space |
+| 🟢 NVIDIA + CUDA | Driver packages and optional CUDA Toolkit require additional space |
 
-### Totals
-
-| 🗂️ Scenario | 💿 Disk Used | 💡 Recommended Free Space |
-|---|---|---|
-| Base (RPMs + FreeOffice + Flatpaks, no Steam runtime) | ~5.5 GB | **8 GB** |
-| + Steam runtime (typical gaming setup) | ~7.0 GB | **10 GB** |
-| + NVIDIA driver | ~7.3 GB | **10 GB** |
-| + CUDA Toolkit | ~11.3 GB | **15 GB** |
-
-> ⚠️ The script checks for **15 GB free** before running option **[1] Run EVERYTHING** — this safely covers the full scenario including CUDA. If you are skipping CUDA, 10 GB is sufficient.
+> ⚠️ The script warns if less than **15 GB free** is available before option **[1] Run EVERYTHING**. This threshold does not guarantee enough space for every installation; allow extra room for downloads, CUDA and games.
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/felipy2k/fedora-Y2K.git
-cd fedora-Y2K
+git clone https://github.com/felipy2k/Fedora-Y2K.git
+cd Fedora-Y2K
 bash Fedora-Y2K.sh
 ```
 
@@ -83,13 +67,15 @@ bash Fedora-Y2K.sh
 ║  [7] Install GNOME extensions only                            ║
 ║  [8] Apply visual settings only                               ║
 ║  [9] Final verification                                       ║
+║  [u] Install Media Writer and remove Popsicle                 ║
+║  [o] Install OpenLogi only                                    ║
 ║  [f] Install FreeOffice only                                  ║
 ║  [0] Exit                                                     ║
 ║  [r] Exit and reboot the system                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
 
-**Option [1] Run EVERYTHING** — correct execution order guaranteed:
+**Option [1] Run EVERYTHING** — execution order:
 
 ```
 repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions → Remove bloat → Settings → best=False
@@ -105,6 +91,9 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🔴 | RPM Fusion Free + Nonfree + Tainted |
 | 🌐 | Google Chrome |
 | 🔓 | fedora-cisco-openh264 (H.264 for Firefox/WebRTC) |
+| 🤖 | ChatGPT repository, configured by the official RPM |
+| 🛡️ | NordVPN repository, configured by its installer |
+| 🧪 | NVIDIA CUDA repository, when requested |
 
 ---
 
@@ -119,13 +108,13 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ---
 
 ### 🖥️ NVIDIA Driver + CUDA
-- 🔍 GPU detection via PCI class codes — no false positives
+- 🔍 GPU detection via PCI display-device class codes
 - 🔐 Secure Boot detection with confirmation prompt
 - 📦 RPM Fusion: `akmod-nvidia`, `xorg-x11-drv-nvidia-cuda`, `nvidia-settings`, `nvidia-vaapi-driver`
 - 🔨 Builds kernel module (`akmods --force`) + regenerates initramfs (`dracut --force`)
 - ⚡ Enables power services: `nvidia-hibernate`, `nvidia-resume`, `nvidia-suspend`
 - 🧪 Optional: full CUDA Toolkit (`nvcc`, cuBLAS, headers) via official NVIDIA repo
-- 🟢 **GPU detected** → installs automatically
+- 🟢 **GPU detected** → asks for confirmation (`yes`) before installation
 - 🟡 **GPU not detected** → explains why and asks to confirm — install proceeds if confirmed
 
 ---
@@ -135,24 +124,26 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🗂️ Category | 📦 Apps |
 |---|---|
 | 🌐 Browsers | Firefox, Google Chrome, Tor Browser |
-| 🎬 Multimedia | VLC, Audacity, Darktable, Handbrake, EasyEffects, OBS Studio |
-| 🎨 Graphics / 3D | GIMP, Inkscape, Blender |
+| 🎬 Multimedia | VLC, Audacity, Darktable, HandBrake, EasyEffects, OBS Studio, DistroAV, Cheese, Jellyfin server, Calf, Rygel |
+| 🎨 Graphics / 3D | Inkscape, Blender |
 | 🎮 Gaming | Steam |
-| 🖥️ GNOME Apps | Files (Nautilus), Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Snapshot, Characters, Connections, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, ABRT, **Drawing** |
-| 🔧 Utilities | Timeshift, Solaar, fastfetch, pipx, DreamChess, lm_sensors, Deskflow |
+| 🖥️ GNOME Apps | Files (Nautilus), Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Characters, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, ABRT, **Drawing**, Papers, Papers Nautilus integration, Dialect, Sushi, System Monitor, Settings, Ptyxis, Parental Controls |
+| 🔧 Utilities | Timeshift, OpenLogi, fastfetch, pipx, DreamChess, lm_sensors, Deskflow, Fedora Media Writer, qBittorrent, Remmina (RDP/VNC) |
 | 🛡️ VPN | **NordVPN** CLI + GUI (official installer, daemon enabled, user added to group) |
 | 📝 Office | FreeOffice 2024 (official SoftMaker installer) |
+| 🤖 AI | ChatGPT (official RPM download) |
 
 ---
 
-### 📱 Flatpaks (Flathub)
+### 📱 Flatpaks (26 Flathub + 1 Fedora)
 
 | 🗂️ Category | 📦 Apps |
 |---|---|
-| 🔧 System | Extension Manager, Resources, Flatseal, Popsicle, File Shredder (Raider), LocalSend, Switcheroo, Podman Desktop |
-| 🎬 Multimedia | Shotcut, Video Trimmer, Camera Ctrls, Converseen |
-| 🧠 Productivity | FreeCAD, Upscayl, Exhibit (3D Viewer), Minder, Motrix |
-| 🎵 Entertainment | Blanket, Shortwave, Podcasts, Gcolor3, Sticky Notes, Alpaca, **Discord** |
+| 🔧 System | Extension Manager, Resources, Flatseal, Gear Lever, File Shredder (Raider), LocalSend, Switcheroo, Podman Desktop |
+| 🎬 Multimedia | Shotcut, Video Trimmer, Camera Ctrls, Converseen, Jellyfin Desktop, Playlifin |
+| 🧠 Productivity | GIMP, FreeCAD, Upscayl, Exhibit (3D Viewer) |
+| 🎵 Entertainment | Blanket, Shortwave, Podcasts, Gcolor3, Sticky Notes, Alpaca, **Discord**, Telegram |
+| 🖥️ Fedora remote | GNOME Connections |
 
 ---
 
@@ -168,7 +159,6 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | Clipboard Indicator | Clipboard history manager |
 | Dash to Dock | Persistent app dock |
 | GSConnect | KDE Connect integration for GNOME |
-| Just Perfection | Fine-tune GNOME Shell elements |
 | Tiling Shell | Window tiling manager |
 | Vitals | CPU, RAM, temp, fan, network in panel (uses `lm_sensors`) |
 
@@ -198,7 +188,8 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🎵 Audio | Decibels, GNOME Music, Rhythmbox |
 | 💻 Terminal | GNOME Terminal → keeps **Ptyxis** (default since Fedora 41) |
 | 🧩 Extensions | gnome-extensions-app → replaced by Extension Manager Flatpak |
-| 🗑️ Other | Cheese, GNOME Tour, Mediawriter, Weather, Maps, Yelp, dconf-editor, htop, Piper, JACK |
+| 🗑️ Other | GNOME Tour, Weather, Maps, Yelp, dconf-editor, htop, Piper, JACK, QjackCtl, Bruno Flatpak |
+| 💾 USB writer | Popsicle — only when Fedora Media Writer is confirmed installed |
 
 ---
 
@@ -222,11 +213,11 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 
 | | |
 |---|---|
-| 🐧 | Fedora Workstation **41 or later** (optimized for Fedora 44 + GNOME 50) |
+| 🐧 | Fedora Workstation — configured for **Fedora 44 + GNOME 50**, x86_64 |
 | 🌐 | Internet connection |
 | 🔑 | User account with `sudo` access |
 | 🖥️ | Run from inside a graphical (GNOME) session — not SSH/TTY |
-| 💾 | ~15 GB free disk space (Steam + Blender + CUDA) |
+| 💾 | Free space for apps, dependencies and downloads; script warns below **15 GB** |
 
 ---
 
@@ -235,7 +226,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 <details>
 <summary>⚠️ RPM Fusion update conflicts</summary>
 
-When Fedora releases a system update and RPM Fusion hasn't yet published the matching freeworld package, DNF/GNOME Software can throw confusing dependency errors. The script sets `best=False` in `/etc/dnf/dnf.conf` **only after all packages are installed** — so future updates skip unresolvable packages rather than aborting, without affecting the initial install.
+When Fedora releases a system update and RPM Fusion hasn't yet published the matching freeworld package, DNF/GNOME Software can throw confusing dependency errors. The script sets `best=False` in `/etc/dnf/dnf.conf` **after the installation steps**. This can help with package-selection conflicts but does not guarantee that all dependency problems will be resolved.
 </details>
 
 <details>
@@ -243,7 +234,7 @@ When Fedora releases a system update and RPM Fusion hasn't yet published the mat
 
 If Secure Boot is enabled, the script detects it and prompts for confirmation. After installation, the `akmod` module must be manually signed. See: [RPM Fusion — Secure Boot](https://rpmfusion.org/Howto/Secure%20Boot)
 
-**GPU not detected?** This can happen when booting with the onboard/integrated GPU, or when pre-installing the driver before the card is physically inserted. The script detects this, explains it, and asks for confirmation — just say `y` and the driver installs normally. Typical workflow: install driver → reboot → switch to NVIDIA in BIOS.
+**GPU not detected?** This can happen when booting with the onboard/integrated GPU, or when pre-installing the driver before the card is physically inserted. The script detects this, explains it, and asks for confirmation — type `yes` to proceed with the driver installation. Typical workflow: install driver → reboot → switch to NVIDIA in BIOS.
 </details>
 
 <details>
@@ -256,6 +247,30 @@ The RPM Fusion driver already includes CUDA runtime for apps (Blender, OBS, etc.
 <summary>🛡️ NordVPN</summary>
 
 Installed via the official NordVPN installer (`downloads.nordcdn.com`) — handles repo, GPG key, and packages in one step. Both **CLI and GUI** are installed (`-p nordvpn-gui`). The `nordvpnd` daemon is enabled and your user is added to the `nordvpn` group. After install: `nordvpn login`. For immediate use without logout: `newgrp nordvpn`.
+</details>
+
+<details>
+<summary>🤖 ChatGPT</summary>
+
+Downloaded from the official RPM source for `x86_64` or `aarch64` in options **[1]** and **[4]**. The RPM includes its signing key and update repository. The script checks the package identity and installation result. No `assets/` folder is required. Already installed copies are skipped; sign in through the app after installation.
+</details>
+
+<details>
+<summary>🖱️ OpenLogi</summary>
+
+Installs **v0.8.1** from the developer's GitHub release for `amd64` or `arm64`, verifies SHA-256 and confirms installation. Use **[o]** to install only OpenLogi. Launch with `openlogi-desktop`. To enable its background agent:
+
+```bash
+systemctl --user enable --now openlogi-agent.service
+```
+
+ChatGPT and OpenLogi preserve the downloaded RPM and print a retry command if DNF installation fails.
+</details>
+
+<details>
+<summary>💾 Fedora Media Writer</summary>
+
+Use **[u]** to install `mediawriter` and remove Popsicle. Removal checks the user/system Flatpak copies and the RPM package. Popsicle is kept if Media Writer is missing. This check also runs during RPM installation and cleanup.
 </details>
 
 <details>
@@ -287,13 +302,13 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 - 📋 **Logging** — timestamped log saved to `~/fedora-y2k-YYYYMMDD-HHMMSS.log`
 - 🔑 **Sudo keepalive** — authenticates once, then refreshes the `sudo` timestamp in the background so long installs never pause for a password mid-run
 - 🖥️ **Session-aware** — visual steps skip cleanly when no graphical session is present (SSH/TTY)
-- 🔒 **Grouped installs** — independent RPM groups; failures are isolated and visible
+- 🔒 **Individual installs** — repository RPM applications are installed and checked separately; one failing package does not block the others
 - 💾 **Package backup** — full RPM list saved before bloat removal
 - 💿 **Disk space check** — warns if less than 15 GB free
-- 🐧 **Kernel cap** — keeps only 2 old kernels (`installonly_limit=2`) to save `/boot` space
-- 📊 **Final summary** — total warnings + log path
-- 🔄 **Idempotent** — safe to re-run; already-applied changes are detected and skipped
-- 🚫 **Non-blocking** — every step is wrapped so a single failure logs a warning and never aborts the run
+- 🐧 **Kernel limit** — sets `installonly_limit=2` to limit retained kernel versions
+- 📊 **Final verification** — checks every expected RPM, Flatpak and extension; reports missing items by name, warning count and log path
+- 🔄 **Repeat runs** — installed catalog RPM apps and Flatpaks are detected and skipped
+- 🚫 **Failure reporting** — application failures produce warnings while subsequent installations continue
 </details>
 
 ---
