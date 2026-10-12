@@ -101,6 +101,8 @@ show_menu() {
   printf "║%-${W}s║\n" "  [7] Install GNOME extensions only"
   printf "║%-${W}s║\n" "  [8] Apply visual settings only"
   printf "║%-${W}s║\n" "  [9] Final verification"
+  printf "║%-${W}s║\n" "  [u] Install Media Writer and remove Popsicle"
+  printf "║%-${W}s║\n" "  [o] Install OpenLogi only"
   printf "║%-${W}s║\n" "  [f] Install FreeOffice only"
   printf "║%-${W}s║\n" "  [0] Exit"
   printf "║%-${W}s║\n" "  [r] Exit and reboot the system"
@@ -223,165 +225,74 @@ install_codecs() {
 # ─────────────────────────────────────────────
 # Personal RPM apps captured from the reference PC (2026-10-12).
 # These sources are separate from the Fedora/RPM Fusion hardware setup.
-install_chatgpt() {
-  step "ChatGPT"
-  if rpm -q chatgpt &>/dev/null; then
-    ok "ChatGPT already installed (skipping)."
-    return
-  fi
+RPM_APP_PACKAGES=(
+  dnf-plugins-core
+  git
+  wget
+  curl
+  flatpak
+  fastfetch
+  pipx
+  papirus-icon-theme
+  google-chrome-stable
+  firefox
+  torbrowser-launcher
+  vlc
+  audacity
+  darktable
+  HandBrake-gui
+  easyeffects
+  obs-studio
+  cheese
+  obs-studio-plugin-distroav
+  jellyfin
+  inkscape
+  blender
+  steam
+  gnome-tweaks
+  baobab
+  nautilus
+  deja-dup
+  gnome-boxes
+  gnome-calculator
+  gnome-calendar
+  gnome-characters
+  gnome-abrt
+  gnome-system-monitor
+  gnome-contacts
+  simple-scan
+  gnome-disk-utility
+  gnome-text-editor
+  gnome-font-viewer
+  gnome-color-manager
+  gnome-software
+  gnome-clocks
+  gnome-logs
+  evince
+  loupe
+  file-roller
+  drawing
+  papers
+  papers-nautilus
+  dialect
+  sushi
+  timeshift
+  dreamchess
+  lm_sensors
+  deskflow
+  mediawriter
+  qbittorrent
+  remmina
+  remmina-plugins-rdp
+  remmina-plugins-vnc
+  calf
+  rygel
+  malcontent-control
+  gnome-control-center
+  ptyxis
+)
 
-  # The official RPM includes its signing key and update repository.
-  # https://learn.chatgpt.com/docs/linux/linux-app
-  local chatgpt_arch chatgpt_rpm
-  chatgpt_arch=$(uname -m)
-  case "$chatgpt_arch" in
-    x86_64|aarch64) ;;
-    *) warning "ChatGPT is unavailable for this architecture: $chatgpt_arch"; return ;;
-  esac
-
-  chatgpt_rpm=$(mktemp --suffix=.rpm) || { warning "Cannot create ChatGPT download file."; return; }
-  if curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
-      --retry 2 --connect-timeout 15 --max-time 1800 \
-      "https://persistent.oaistatic.com/codex-app-prod/linux/rpm/latest/chatgpt.${chatgpt_arch}.rpm" \
-      -o "$chatgpt_rpm"; then
-    try sudo dnf install -y "$chatgpt_rpm"
-  else
-    warning "ChatGPT download failed; skipping."
-  fi
-  rm -f -- "$chatgpt_rpm"
-}
-
-install_personal_rpms() {
-  install_chatgpt
-
-  step "OpenLogi"
-  if rpm -q openlogi &>/dev/null; then
-    ok "OpenLogi already installed (skipping)."
-    return
-  fi
-
-  # Match the installed release; verify the publisher's release SHA-256.
-  local arch checksum rpm_file
-  case "$(uname -m)" in
-    x86_64)
-      arch=amd64
-      checksum=23aff73ee8ab6a2f9d340ad259ea3935177ee81fcd6596b231288027098f2d09 ;;
-    aarch64)
-      arch=arm64
-      checksum=9c5e18650682d5075e3f4feb84fee5c9e8caa6659ff604b1a8d7a0be25f9559d ;;
-    *) warning "OpenLogi v0.8.1 is unavailable for this architecture."; return ;;
-  esac
-  rpm_file=$(mktemp --suffix=.rpm) || { warning "Cannot create OpenLogi download file."; return; }
-  if curl -fL --retry 2 --connect-timeout 15 --max-time 300 \
-      "https://github.com/AprilNEA/OpenLogi/releases/download/v0.8.1/openlogi-v0.8.1-linux-${arch}.rpm" -o "$rpm_file" &&
-     printf '%s  %s\n' "$checksum" "$rpm_file" | sha256sum --check --status; then
-    try sudo dnf install -y "$rpm_file"
-  else
-    warning "OpenLogi download or SHA-256 verification failed; skipping."
-  fi
-  rm -f -- "$rpm_file"
-}
-
-install_rpms() {
-  info "[RPM] Installing RPM packages"
-
-  install_codecs
-
-  # Install in logical groups so a failure in one group doesn't silently
-  # cascade and skip everything else. Each group has its own try().
-  # NO --skip-unavailable here — we want to know if a package fails.
-
-  step "Base tools"
-  try sudo dnf install -y \
-    dnf-plugins-core git wget curl flatpak fastfetch pipx papirus-icon-theme
-
-  step "Browsers"
-  try sudo dnf install -y \
-    google-chrome-stable firefox torbrowser-launcher
-
-  step "Multimedia apps"
-  try sudo dnf install -y \
-    vlc audacity darktable HandBrake-gui easyeffects obs-studio cheese obs-studio-plugin-distroav jellyfin
-
-  step "Graphics / 3D"
-  try sudo dnf install -y \
-    inkscape blender
-
-  step "Gaming"
-  try sudo dnf install -y steam
-
-  step "GNOME apps"
-  try sudo dnf install -y \
-    gnome-tweaks baobab nautilus deja-dup gnome-boxes gnome-calculator \
-    gnome-calendar gnome-characters gnome-abrt gnome-system-monitor \
-    gnome-contacts simple-scan gnome-disk-utility gnome-text-editor \
-    gnome-font-viewer gnome-color-manager gnome-software gnome-clocks \
-    gnome-logs evince loupe file-roller drawing papers papers-nautilus dialect sushi
-
-  step "Utilities"
-  try sudo dnf install -y \
-    timeshift dreamchess lm_sensors deskflow mediawriter qbittorrent \
-    remmina remmina-plugins-rdp remmina-plugins-vnc
-
-  install_personal_rpms
-
-  # ── NordVPN — official installer (handles repo + GPG + install) ──
-  step "NordVPN"
-  if ! command -v nordvpn &>/dev/null; then
-    if curl -sSf --max-time 10 -o /dev/null https://downloads.nordcdn.com/apps/linux/install.sh 2>/dev/null; then
-      step "Running official NordVPN installer (CLI + GUI)"
-      if sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh) -p nordvpn-gui; then
-        ok "NordVPN installed."
-        try sudo systemctl enable --now nordvpnd
-        try sudo usermod -aG nordvpn "$USER"
-        ok "Log in with: nordvpn login"
-        warning "Group membership requires logout/reboot. For immediate use: newgrp nordvpn"
-      else
-        warning "NordVPN installer failed. Try manually after reboot:"
-        echo "  sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh)"
-      fi
-    else
-      warning "Cannot reach nordcdn.com — skipping NordVPN."
-    fi
-  else
-    ok "NordVPN already installed (skipping)."
-  fi
-}
-
-# ─────────────────────────────────────────────
-# FREEOFFICE
-# Replaces LibreOffice (removed afterwards)
-# ─────────────────────────────────────────────
-install_freeoffice() {
-  info "[FREEOFFICE] Installing FreeOffice 2024"
-
-  # Check connectivity before attempting curl | bash
-  if ! curl -fsSL --max-time 5 -o /dev/null https://softmaker.net/down/install-softmaker-freeoffice-2024.sh 2>/dev/null; then
-    warning "Cannot reach softmaker.net — skipping FreeOffice installation."
-    warning "Install manually when connected:"
-    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
-    return
-  fi
-
-  step "Downloading and running official installer"
-  if curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash; then
-    ok "FreeOffice installed successfully."
-  else
-    warning "Failed to install FreeOffice. Try manually:"
-    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
-  fi
-}
-
-# ─────────────────────────────────────────────
-# FLATPAKS
-# ─────────────────────────────────────────────
-install_flatpaks() {
-  info "[FLATPAK] Installing apps from Flathub"
-
-  try flatpak remote-add --if-not-exists flathub \
-    https://flathub.org/repo/flathub.flatpakrepo
-
-  FLATPAK_IDS=(
+FLATPAK_IDS=(
     # System utilities
     com.mattjakeman.ExtensionManager        # GNOME Extension Manager
     net.nokyan.Resources                    # Resource monitor
@@ -417,7 +328,304 @@ install_flatpaks() {
     nl.hjdskes.gcolor3                      # Color picker
     com.vixalien.sticky                     # Sticky Notes
     com.jeffser.Alpaca                      # Alpaca (local LLM)
-  )
+)
+
+EXTENSIONS=(
+    AlphabeticalAppGrid@stuarthayhurst                  # Alphabetical App Grid
+    appindicatorsupport@rgcjonas.gmail.com              # AppIndicator (system tray support)
+    blur-my-shell@aunetx                                # Blur my Shell (blur panel, dash, overview)
+    BringOutSubmenuOfPowerOffLogoutButton@pratap.fastmail.fm  # Bring Out Submenu Of Power Off Button
+    caffeine@patapon.info                               # Caffeine (prevent suspend)
+    clipboard-indicator@tudmotu.com                     # Clipboard Indicator (clipboard manager)
+    dash-to-dock@micxgx.gmail.com                       # Dash to Dock
+    gsconnect@andyholmes.github.io                      # GSConnect (KDE Connect for GNOME)
+    tilingshell@ferrarodomenico.com                     # Tiling Shell
+    Vitals@CoreCoding.com                               # Vitals (CPU/RAM/temp/network monitor in panel)
+)
+
+rpm_app_installed() {
+  rpm -q --whatprovides "$1" &>/dev/null
+}
+
+install_rpm_apps() {
+  local package failures=0
+  for package in "$@"; do
+    step "$package"
+    if rpm_app_installed "$package"; then
+      ok "$package already installed."
+    elif sudo dnf install -y "$package" && rpm_app_installed "$package"; then
+      ok "$package installation confirmed."
+    else
+      warning "$package NOT installed successfully. See $LOG_FILE"
+      failures=$((failures + 1))
+    fi
+  done
+  [[ "$failures" -eq 0 ]]
+}
+
+flatpak_app_installed() {
+  flatpak info --user "$1" &>/dev/null || flatpak info --system "$1" &>/dev/null
+}
+
+remove_flatpak_app() {
+  local app="$1" scope failures=0
+  for scope in --user --system; do
+    if flatpak info "$scope" "$app" &>/dev/null; then
+      step "Removing $app ($scope)"
+      if flatpak uninstall "$scope" -y "$app" &&
+         ! flatpak info "$scope" "$app" &>/dev/null; then
+        ok "$app removed ($scope)."
+      else
+        warning "$app removal failed ($scope). See $LOG_FILE"
+        failures=$((failures + 1))
+      fi
+    fi
+  done
+  [[ "$failures" -eq 0 ]]
+}
+
+migrate_usb_writer() {
+  # Never remove the old USB writer until its replacement is installed.
+  if ! rpm_app_installed mediawriter; then
+    warning "Fedora Media Writer is missing; keeping Popsicle until installation succeeds."
+    return 1
+  fi
+  local failures=0
+  remove_flatpak_app com.system76.Popsicle || failures=1
+  if rpm -q popsicle &>/dev/null; then
+    if sudo dnf remove -y popsicle && ! rpm -q popsicle &>/dev/null; then
+      ok "Popsicle RPM removed."
+    else
+      warning "Popsicle RPM removal failed. See $LOG_FILE"
+      failures=1
+    fi
+  fi
+  [[ "$failures" -eq 0 ]]
+}
+
+install_usb_writer() {
+  install_rpm_apps mediawriter && migrate_usb_writer
+}
+
+extension_installed() {
+  [[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$1/metadata.json" ||
+     -f "/usr/share/gnome-shell/extensions/$1/metadata.json" ]]
+}
+
+verify_app_inventory() {
+  local app missing=0
+  for app in "${RPM_APP_PACKAGES[@]}" chatgpt openlogi nordvpn-gui softmaker-freeoffice-2024; do
+    if ! rpm_app_installed "$app"; then
+      warning "Missing RPM: $app"
+      missing=$((missing + 1))
+    fi
+  done
+  for app in "${FLATPAK_IDS[@]}" org.gnome.Connections; do
+    if ! flatpak_app_installed "$app"; then
+      warning "Missing Flatpak: $app"
+      missing=$((missing + 1))
+    fi
+  done
+  for app in "${EXTENSIONS[@]}"; do
+    if ! extension_installed "$app"; then
+      warning "Missing GNOME extension: $app"
+      missing=$((missing + 1))
+    fi
+  done
+  if [[ "$missing" -eq 0 ]]; then
+    ok "All expected RPM apps, Flatpaks and extensions are installed."
+  else
+    warning "$missing expected item(s) missing. Review the names above and $LOG_FILE"
+  fi
+  if flatpak_app_installed com.system76.Popsicle || rpm -q popsicle &>/dev/null; then
+    warning "Popsicle is still installed. Use menu [u] to migrate to Fedora Media Writer."
+  fi
+}
+
+install_chatgpt() {
+  step "ChatGPT"
+  if rpm -q chatgpt &>/dev/null; then
+    ok "ChatGPT already installed (skipping)."
+    return 0
+  fi
+
+  # The official RPM includes its signing key and update repository.
+  # https://learn.chatgpt.com/docs/linux/linux-app
+  local chatgpt_arch chatgpt_rpm chatgpt_identity
+  chatgpt_arch=$(uname -m)
+  case "$chatgpt_arch" in
+    x86_64|aarch64) ;;
+    *) warning "ChatGPT NOT installed: unsupported architecture: $chatgpt_arch"; return 1 ;;
+  esac
+
+  chatgpt_rpm=$(mktemp --suffix=.rpm) || {
+    warning "ChatGPT NOT installed: cannot create download file."
+    return 1
+  }
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
+      --retry 2 --connect-timeout 15 --max-time 1800 \
+      "https://persistent.oaistatic.com/codex-app-prod/linux/rpm/latest/chatgpt.${chatgpt_arch}.rpm" \
+      -o "$chatgpt_rpm"; then
+    warning "ChatGPT NOT installed: download failed. See $LOG_FILE"
+    rm -f -- "$chatgpt_rpm"
+    return 1
+  fi
+
+  # Reject invalid downloads or a package for a different architecture.
+  if ! chatgpt_identity=$(rpm -qp --qf '%{NAME} %{ARCH}' "$chatgpt_rpm") ||
+     [[ "$chatgpt_identity" != "chatgpt $chatgpt_arch" ]]; then
+    warning "ChatGPT NOT installed: downloaded file is not the expected RPM. See $LOG_FILE"
+    rm -f -- "$chatgpt_rpm"
+    return 1
+  fi
+
+  # Do not use try() here: it deliberately discards the command's exit code.
+  if sudo dnf install -y "$chatgpt_rpm" && rpm -q chatgpt &>/dev/null; then
+    ok "ChatGPT installation confirmed."
+    rm -f -- "$chatgpt_rpm"
+    return 0
+  fi
+
+  warning "ChatGPT NOT installed successfully. Review the DNF error in $LOG_FILE"
+  note "Downloaded RPM kept for retry: $chatgpt_rpm"
+  printf '  Retry: sudo dnf install -y %q\n' "$chatgpt_rpm"
+  return 1
+}
+
+install_openlogi() {
+  step "OpenLogi"
+  if rpm -q openlogi &>/dev/null; then
+    ok "OpenLogi already installed (skipping)."
+    return 0
+  fi
+
+  local arch rpm_arch checksum rpm_file identity
+  rpm_arch=$(uname -m)
+  case "$rpm_arch" in
+    x86_64)
+      arch=amd64
+      checksum=23aff73ee8ab6a2f9d340ad259ea3935177ee81fcd6596b231288027098f2d09 ;;
+    aarch64)
+      arch=arm64
+      checksum=9c5e18650682d5075e3f4feb84fee5c9e8caa6659ff604b1a8d7a0be25f9559d ;;
+    *) warning "OpenLogi NOT installed: unsupported architecture: $rpm_arch"; return 1 ;;
+  esac
+
+  rpm_file=$(mktemp --suffix=.rpm) || {
+    warning "OpenLogi NOT installed: cannot create download file."
+    return 1
+  }
+  step "Downloading OpenLogi v0.8.1 ($arch)"
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
+      --retry 2 --connect-timeout 15 --max-time 1800 \
+      "https://github.com/AprilNEA/OpenLogi/releases/download/v0.8.1/openlogi-v0.8.1-linux-${arch}.rpm" \
+      -o "$rpm_file"; then
+    warning "OpenLogi NOT installed: download failed. See $LOG_FILE"
+    rm -f -- "$rpm_file"
+    return 1
+  fi
+
+  if ! printf '%s  %s\n' "$checksum" "$rpm_file" | sha256sum --check; then
+    warning "OpenLogi NOT installed: SHA-256 verification failed. See $LOG_FILE"
+    rm -f -- "$rpm_file"
+    return 1
+  fi
+  if ! identity=$(rpm -qp --qf '%{NAME} %{ARCH}' "$rpm_file") ||
+     [[ "$identity" != "openlogi $rpm_arch" ]]; then
+    warning "OpenLogi NOT installed: downloaded file is not the expected RPM."
+    rm -f -- "$rpm_file"
+    return 1
+  fi
+
+  step "Installing OpenLogi"
+  if sudo dnf install -y "$rpm_file" && rpm -q openlogi &>/dev/null; then
+    ok "OpenLogi installation confirmed."
+    note "Open the app from the applications menu or run: openlogi-desktop"
+    note "Enable its background agent with: systemctl --user enable --now openlogi-agent.service"
+    rm -f -- "$rpm_file"
+    return 0
+  fi
+
+  warning "OpenLogi installation failed. Review the DNF error in $LOG_FILE"
+  note "Downloaded RPM kept for retry: $rpm_file"
+  printf '  Retry: sudo dnf install -y %q\n' "$rpm_file"
+  return 1
+}
+
+install_personal_rpms() {
+  install_chatgpt
+  install_openlogi
+}
+
+install_rpms() {
+  info "[RPM] Installing RPM packages"
+
+  install_codecs
+
+  # Install each app independently so one unavailable package cannot block others.
+
+  install_rpm_apps "${RPM_APP_PACKAGES[@]}"
+  migrate_usb_writer
+
+  install_personal_rpms
+
+  # ── NordVPN — official installer (handles repo + GPG + install) ──
+  step "NordVPN"
+  if ! command -v nordvpn &>/dev/null; then
+    if curl -sSf --max-time 10 -o /dev/null https://downloads.nordcdn.com/apps/linux/install.sh 2>/dev/null; then
+      step "Running official NordVPN installer (CLI + GUI)"
+      if sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh) -p nordvpn-gui; then
+        ok "NordVPN installed."
+        try sudo systemctl enable --now nordvpnd
+        try sudo usermod -aG nordvpn "$USER"
+        ok "Log in with: nordvpn login"
+        warning "Group membership requires logout/reboot. For immediate use: newgrp nordvpn"
+      else
+        warning "NordVPN installer failed. Try manually after reboot:"
+        echo "  sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh)"
+      fi
+    else
+      warning "Cannot reach nordcdn.com — skipping NordVPN."
+    fi
+  else
+    ok "NordVPN CLI already installed."
+    install_rpm_apps nordvpn-gui
+  fi
+}
+
+# ─────────────────────────────────────────────
+# FREEOFFICE
+# Replaces LibreOffice (removed afterwards)
+# ─────────────────────────────────────────────
+install_freeoffice() {
+  info "[FREEOFFICE] Installing FreeOffice 2024"
+
+  # Check connectivity before attempting curl | bash
+  if ! curl -fsSL --max-time 5 -o /dev/null https://softmaker.net/down/install-softmaker-freeoffice-2024.sh 2>/dev/null; then
+    warning "Cannot reach softmaker.net — skipping FreeOffice installation."
+    warning "Install manually when connected:"
+    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
+    return
+  fi
+
+  step "Downloading and running official installer"
+  if curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash; then
+    ok "FreeOffice installed successfully."
+  else
+    warning "Failed to install FreeOffice. Try manually:"
+    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
+  fi
+}
+
+# ─────────────────────────────────────────────
+# FLATPAKS
+# ─────────────────────────────────────────────
+install_flatpaks() {
+  info "[FLATPAK] Installing apps from Flathub"
+
+  try flatpak remote-add --system --if-not-exists flathub \
+    https://flathub.org/repo/flathub.flatpakrepo
+
 
   for app in "${FLATPAK_IDS[@]}"; do
     # Strip inline comments
@@ -425,12 +633,25 @@ install_flatpaks() {
     app="${app//[[:space:]]/}"
     [[ -z "$app" ]] && continue
     step "$app"
-    try flatpak install -y flathub "$app"
+    if flatpak_app_installed "$app"; then
+      ok "$app already installed."
+    elif flatpak install --system -y flathub "$app" && flatpak_app_installed "$app"; then
+      ok "$app installation confirmed."
+    else
+      warning "$app NOT installed successfully. See $LOG_FILE"
+    fi
   done
 
   # Connections is installed from the Fedora remote on the reference PC.
-  try flatpak remote-add --if-not-exists fedora oci+https://registry.fedoraproject.org
-  try flatpak install -y fedora org.gnome.Connections
+  try flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org
+  if flatpak_app_installed org.gnome.Connections; then
+    ok "Connections already installed."
+  elif flatpak install --system -y fedora org.gnome.Connections &&
+       flatpak_app_installed org.gnome.Connections; then
+    ok "Connections installation confirmed."
+  else
+    warning "Connections NOT installed successfully. See $LOG_FILE"
+  fi
 }
 
 # ─────────────────────────────────────────────
@@ -579,29 +800,27 @@ install_gnome_extensions() {
     export PATH="$HOME/.local/bin:$PATH"
   fi
 
-  EXTENSIONS=(
-    AlphabeticalAppGrid@stuarthayhurst                  # Alphabetical App Grid
-    appindicatorsupport@rgcjonas.gmail.com              # AppIndicator (system tray support)
-    blur-my-shell@aunetx                                # Blur my Shell (blur panel, dash, overview)
-    BringOutSubmenuOfPowerOffLogoutButton@pratap.fastmail.fm  # Bring Out Submenu Of Power Off Button
-    caffeine@patapon.info                               # Caffeine (prevent suspend)
-    clipboard-indicator@tudmotu.com                     # Clipboard Indicator (clipboard manager)
-    dash-to-dock@micxgx.gmail.com                       # Dash to Dock
-    gsconnect@andyholmes.github.io                      # GSConnect (KDE Connect for GNOME)
-    tilingshell@ferrarodomenico.com                     # Tiling Shell
-    Vitals@CoreCoding.com                               # Vitals (CPU/RAM/temp/network monitor in panel)
-  )
 
   if command -v gext &>/dev/null; then
+    local extension_failures=0
     for ext in "${EXTENSIONS[@]}"; do
       ext="${ext%%#*}"
       ext="${ext//[[:space:]]/}"
       [[ -z "$ext" ]] && continue
       step "$ext"
-      try gext install "$ext"
-      try gext enable "$ext"
+      if extension_installed "$ext" || { gext install "$ext" && extension_installed "$ext"; }; then
+        ok "$ext installation confirmed."
+        try gext enable "$ext"
+      else
+        warning "$ext installation failed. See $LOG_FILE"
+        extension_failures=$((extension_failures + 1))
+      fi
     done
-    ok "Extensions installed."
+    if [[ "$extension_failures" -eq 0 ]]; then
+      ok "All requested extensions are installed."
+    else
+      warning "$extension_failures extension(s) failed to install."
+    fi
     note "Log out and back in (or reboot) to activate them — on Wayland, GNOME Shell does not reload extensions live."
     note "Some extensions may need a compatibility update before they load on GNOME 50."
   else
@@ -660,17 +879,15 @@ remove_bloat() {
     'jack-audio-connection-kit*' \
     qjackctl
 
+  migrate_usb_writer
+
   step "Removing unnecessary Flatpaks"
-  # These may not be installed; ignore failures silently (no try() so the
-  # "not installed" case doesn't inflate the warning count).
-  flatpak uninstall -y \
-    org.gnome.Showtime \
-    org.gnome.Decibels \
-    org.gnome.Totem \
-    org.gnome.Music \
-    org.freedesktop.Piper \
-    org.gnome.Help \
-    com.usebruno.Bruno 2>/dev/null || true
+  local obsolete_app
+  for obsolete_app in \
+    org.gnome.Showtime org.gnome.Decibels org.gnome.Totem org.gnome.Music \
+    org.freedesktop.Piper org.gnome.Help com.usebruno.Bruno; do
+    remove_flatpak_app "$obsolete_app"
+  done
 
   step "Cleaning orphan dependencies"
   try sudo dnf autoremove -y
@@ -830,10 +1047,8 @@ verify_final() {
   fi
 
   echo
-  echo -e "${BOLD}── RPM packages that should exist ──${NC}"
-  rpm -qa | grep -E \
-    "google-chrome-stable|firefox|^vlc|audacity|darktable|HandBrake|inkscape|easyeffects|^blender|^steam|^dreamchess|^nordvpn|^deskflow|^drawing|file-roller|obs-studio|gnome-software|papirus|softmaker|freeoffice|^jellyfin|^chatgpt|^openlogi|^cheese|^mediawriter|^qbittorrent|^remmina|^papers|^dialect|^sushi|^gnome-system-monitor|timeshift|deja-dup" \
-    2>/dev/null || warning "Some RPM packages may not be installed."
+  echo -e "${BOLD}── Expected app inventory ──${NC}"
+  verify_app_inventory
 
   echo
   echo -e "${BOLD}── Essential codecs ──${NC}"
@@ -857,12 +1072,6 @@ verify_final() {
   if [[ "$VIDEO_DEFAULT" == *"vlc"* ]];     then ok "VLC is default video player."; else warning "VLC is NOT the default video player."; fi
   if [[ "$AUDIO_DEFAULT" == *"vlc"* ]];     then ok "VLC is default audio player."; else warning "VLC is NOT the default audio player."; fi
   if [[ "$BUTTONS" == *"minimize,maximize"* ]]; then ok "Minimize/Maximize buttons active."; else warning "Minimize/Maximize buttons not set."; fi
-
-  echo
-  echo -e "${BOLD}── Installed Flatpaks ──${NC}"
-  flatpak list --app --columns=application 2>/dev/null | grep -E \
-    "Alpaca|Resources|Flatseal|Blanket|Raider|FreeCAD|Upscayl|Shotcut|VideoTrimmer|cameractrls|converseen|nokse22.Exhibit|localsend|Podcasts|Shortwave|sticky|Converter|ExtensionManager|PodmanDesktop|Discord|gearlever|Playlifin|JellyfinDesktop|org.gimp.GIMP|org.telegram.desktop|org.gnome.Connections" \
-    || warning "Some expected Flatpaks may not be installed."
 
   echo
   echo -e "${BOLD}── NVIDIA GPU ──${NC}"
@@ -963,6 +1172,8 @@ while true; do
     7) install_gnome_extensions ;;
     8) apply_settings ;;
     9) verify_final ;;
+    u|U) ensure_sudo && install_usb_writer ;;
+    o|O) ensure_sudo && install_openlogi ;;
     f|F) ensure_sudo && install_freeoffice ;;
     0) echo "Exiting."; exit 0 ;;
     r|R) echo "Rebooting..."; sudo reboot ;;
