@@ -223,27 +223,36 @@ install_codecs() {
 # ─────────────────────────────────────────────
 # Personal RPM apps captured from the reference PC (2026-10-12).
 # These sources are separate from the Fedora/RPM Fusion hardware setup.
-install_personal_rpms() {
-  local assets_dir
-  assets_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/assets"
-
+install_chatgpt() {
   step "ChatGPT"
   if rpm -q chatgpt &>/dev/null; then
     ok "ChatGPT already installed (skipping)."
-  elif [[ -f /etc/yum.repos.d/chatgpt.repo ]]; then
-    try sudo dnf install -y chatgpt
-  elif [[ -f "$assets_dir/chatgpt.repo" && -f "$assets_dir/RPM-GPG-KEY-chatgpt-3BFA0E4AE8B8CC16A2D9BA684A3B4A566C4660E4.asc" ]]; then
-    # Public signing key and repository definition shipped by the installed
-    # official RPM. Keep signature checks enabled for metadata and packages.
-    if sudo install -m 0644 "$assets_dir/RPM-GPG-KEY-chatgpt-3BFA0E4AE8B8CC16A2D9BA684A3B4A566C4660E4.asc" /etc/pki/rpm-gpg/ &&
-       sudo install -m 0644 "$assets_dir/chatgpt.repo" /etc/yum.repos.d/; then
-      try sudo dnf install -y chatgpt
-    else
-      warning "Could not configure the ChatGPT repository."
-    fi
-  else
-    warning "ChatGPT repository assets missing. Run from the complete Fedora-Y2K checkout."
+    return
   fi
+
+  # The official RPM includes its signing key and update repository.
+  # https://learn.chatgpt.com/docs/linux/linux-app
+  local chatgpt_arch chatgpt_rpm
+  chatgpt_arch=$(uname -m)
+  case "$chatgpt_arch" in
+    x86_64|aarch64) ;;
+    *) warning "ChatGPT is unavailable for this architecture: $chatgpt_arch"; return ;;
+  esac
+
+  chatgpt_rpm=$(mktemp --suffix=.rpm) || { warning "Cannot create ChatGPT download file."; return; }
+  if curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fL \
+      --retry 2 --connect-timeout 15 --max-time 1800 \
+      "https://persistent.oaistatic.com/codex-app-prod/linux/rpm/latest/chatgpt.${chatgpt_arch}.rpm" \
+      -o "$chatgpt_rpm"; then
+    try sudo dnf install -y "$chatgpt_rpm"
+  else
+    warning "ChatGPT download failed; skipping."
+  fi
+  rm -f -- "$chatgpt_rpm"
+}
+
+install_personal_rpms() {
+  install_chatgpt
 
   step "OpenLogi"
   if rpm -q openlogi &>/dev/null; then
