@@ -71,7 +71,10 @@ trap cleanup EXIT
 # errors, so the visual steps are skipped (with a clear message) in that case.
 # ─────────────────────────────────────────────
 has_gui_session() {
-  [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || [[ -S "/run/user/${UID}/bus" ]]
+  local desktop="${XDG_CURRENT_DESKTOP:-}"
+  [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] &&
+    [[ "${desktop,,}" == *gnome* ]] &&
+    { [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || [[ -S "/run/user/${UID}/bus" ]]; }
 }
 
 if [[ "$EUID" -eq 0 ]]; then
@@ -80,6 +83,95 @@ if [[ "$EUID" -eq 0 ]]; then
 fi
 
 FEDORA_VER="$(rpm -E %fedora)"
+
+
+# Numeric PCI IDs avoid language-dependent vendor names and false matches.
+gpu_devices() {
+  local devices
+  command -v lspci >/dev/null || return 1
+  devices=$(lspci -Dn) || return 1
+  awk '$2 ~ /^(0300|0302|0380):$/ {print}' <<< "$devices"
+}
+
+gpu_vendor_present() {
+  awk -v vendor="$1" '$3 ~ ("^" vendor ":") {found=1} END {exit !found}' <<< "$GPU_DEVICES"
+}
+
+find_nvcc() {
+  local candidate mode="${1:-any}"
+  # Prefer the system-selected Toolkit over an older compiler in PATH.
+  if [[ -x /usr/local/cuda/bin/nvcc ]]; then
+    printf '%s\n' /usr/local/cuda/bin/nvcc
+    return 0
+  fi
+  while IFS= read -r candidate; do
+    if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
+  done < <(printf '%s\n' /usr/local/cuda-*/bin/nvcc | sort -Vr)
+  # A user/Conda compiler is useful for diagnostics but must never become a
+  # system-wide PATH entry written by this installer.
+  if [[ "$mode" != system ]] && command -v nvcc >/dev/null; then
+    command -v nvcc
+    return 0
+  fi
+  return 1
+}
+
+protect_cuda_driver_packages() {
+  local guard_file
+  guard_file=$(mktemp --suffix=.repo) || return 1
+  # DNF5 reads override files after the original .repo file. Use a glob so
+  # existing CUDA repositories and ones added later receive the same guard.
+  # Apply the guard before any DNF transaction, including when an older
+  # CUDA repository configuration is already present.
+  if ! printf '%s\n' '[cuda*]' \
+      'excludepkgs=nvidia* libnvidia* kmod-nvidia* akmod-nvidia* xorg-x11-drv-nvidia* cuda-drivers*' > "$guard_file" ||
+     ! sudo install -d -m 0755 /etc/dnf/repos.override.d ||
+     ! sudo install -m 0644 "$guard_file" /etc/dnf/repos.override.d/zz-fedora-y2k-cuda.repo; then
+    rm -f -- "$guard_file"
+    warning "Could not protect RPM Fusion drivers from CUDA repository replacements."
+    return 1
+  fi
+  rm -f -- "$guard_file"
+}
+
+verify_nvidia() {
+  local GPU_DEVICES smi nvcc_path failures=0
+  if ! GPU_DEVICES=$(gpu_devices); then
+    warning "Cannot inspect PCI GPUs; NVIDIA status is unknown."
+    return 1
+  fi
+  if ! gpu_vendor_present 10de; then
+    note "No NVIDIA GPU enumerated; no active NVIDIA driver expected."
+    return 0
+  fi
+  if ! rpm -q akmod-nvidia xorg-x11-drv-nvidia-cuda &>/dev/null; then
+    warning "NVIDIA GPU detected but required driver packages are missing."
+    return 1
+  fi
+  if ! modinfo -k "$(uname -r)" nvidia &>/dev/null; then
+    warning "NVIDIA module is missing for the running kernel. Check akmods logs."
+    failures=$((failures + 1))
+  fi
+  if smi=$(nvidia-smi 2>&1); then
+    ok "NVIDIA driver is responding on the running system."
+    printf '%s\n' "$smi"
+  else
+    warning "NVIDIA packages are present, but the driver is not responding. A reboot may be required; check akmods and Secure Boot if it persists."
+    printf '%s\n' "$smi"
+    failures=$((failures + 1))
+  fi
+  if nvcc_path=$(find_nvcc); then
+    if "$nvcc_path" --version; then
+      ok "CUDA compiler found: $nvcc_path"
+    else
+      warning "CUDA compiler exists but could not run."
+      failures=$((failures + 1))
+    fi
+  else
+    note "CUDA compiler not found. The full Toolkit is optional; driver status is reported separately."
+  fi
+  [[ "$failures" -eq 0 ]]
+}
 
 show_menu() {
   clear
@@ -100,15 +192,11 @@ show_menu() {
   printf "║%-${W}s║\n" "  [6] Install NVIDIA driver + CUDA only"
   printf "║%-${W}s║\n" "  [7] Install GNOME extensions only"
   printf "║%-${W}s║\n" "  [8] Apply visual settings only"
-  printf "║%-${W}s║\n" "  [9] Final verification"
-  printf "║%-${W}s║\n" "  [u] Install Media Writer and remove Popsicle"
-  printf "║%-${W}s║\n" "  [o] Install OpenLogi only"
-  printf "║%-${W}s║\n" "  [f] Install FreeOffice only"
   printf "║%-${W}s║\n" "  [0] Exit"
   printf "║%-${W}s║\n" "  [r] Exit and reboot the system"
   echo "╚${bar}╝"
   echo -e "${NC}"
-  read -rp "  Choose an option: " CHOICE
+  read -rp "  Choose an option: " CHOICE || return 1
 }
 
 # ─────────────────────────────────────────────
@@ -116,13 +204,29 @@ show_menu() {
 # ─────────────────────────────────────────────
 add_repos() {
   info "[REPOS] Adding repositories"
+  if [[ ! "$FEDORA_VER" =~ ^[0-9]+$ || -e /run/ostree-booted ]]; then
+    warning "This installer requires traditional Fedora with DNF, not an Atomic desktop."
+    return 1
+  fi
+  if [[ "$(uname -m)" != x86_64 ]]; then
+    warning "The complete application catalog currently requires x86_64."
+    return 1
+  fi
+  protect_cuda_driver_packages || return 1
+  if ! sudo dnf install -y dnf5-plugins pciutils curl; then
+    warning "Could not install required repository/hardware tools."
+    return 1
+  fi
 
   step "RPM Fusion (free + nonfree)"
-  try sudo dnf install -y \
+  if ! sudo dnf install -y \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
-    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm"
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm"; then
+    warning "RPM Fusion setup failed; installation stopped."
+    return 1
+  fi
 
-  step "Enabling RPM Fusion AppStream metadata for GNOME Software"
+  step "Enabling RPM Fusion tainted repositories"
   try sudo dnf install -y rpmfusion-free-release-tainted rpmfusion-nonfree-release-tainted
 
   step "Enabling fedora-cisco-openh264 repo (required for Firefox/WebRTC)"
@@ -140,7 +244,7 @@ gpgkey=https://dl.google.com/linux/linux_signing_key.pub
 EOF
   fi
 
-  try sudo dnf makecache
+  sudo dnf makecache || { warning "Repository metadata refresh failed."; return 1; }
 }
 
 # ─────────────────────────────────────────────
@@ -148,23 +252,26 @@ EOF
 # ─────────────────────────────────────────────
 update_system() {
   info "[SYSTEM] Updating system"
-  # Keep only 2 old kernels to save disk space.
+  # Keep three kernels in total, preserving fallback boot options.
   # Uses config-manager setopt (DNF5) so it works whether or not the line
   # already exists in dnf.conf — the old `sed` no-op'd when the line was absent.
-  try sudo dnf config-manager setopt installonly_limit=2
-  try sudo dnf upgrade --refresh -y
+  try sudo dnf config-manager setopt installonly_limit=3
+  if ! sudo dnf upgrade --refresh -y; then
+    warning "System update failed. Resolve the DNF error before installing additional packages."
+    return 1
+  fi
+  ok "System update completed."
 }
 
-# Apply best=False only AFTER all installs are done.
-# This prevents DNF from silently skipping packages during the initial install
-# transactions, but still protects against future RPM Fusion update conflicts.
+# Apply the chosen DNF solver preference after installation.
+# Existing settings still apply during setup; best=False is not a conflict fix.
 apply_dnf_safety_setting() {
   info "[DNF CONFIG] Applying best=False for future updates"
-  if ! grep -q '^best=False' /etc/dnf/dnf.conf 2>/dev/null; then
-    try sudo sed -i '/^\[main\]/a best=False' /etc/dnf/dnf.conf
-    ok "best=False added to dnf.conf (protects future updates from RPM Fusion lag)."
+  if sudo dnf config-manager setopt best=False; then
+    ok "DNF best=False configured. This does not guarantee conflict-free updates."
   else
-    ok "best=False already set in dnf.conf."
+    warning "Could not configure DNF best=False."
+    return 1
   fi
 }
 
@@ -179,11 +286,10 @@ install_codecs() {
   if rpm -q ffmpeg-free &>/dev/null; then
     try sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing
   else
-    ok "ffmpeg-free already swapped (skipping)."
+    install_rpm_apps ffmpeg
   fi
 
-  # DNF5 (Fedora 43+) does not recognize the @multimedia group.
-  # Install equivalent packages individually for full compatibility.
+  # Use explicit codec packages instead of depending on a release-specific group.
   step "Installing GStreamer codec stack (DNF5-compatible individual packages)"
   try sudo dnf install -y \
     --setopt="install_weak_deps=False" \
@@ -201,8 +307,13 @@ install_codecs() {
     mozilla-openh264
 
   step "Hardware video acceleration (VA-API/VDPAU)"
-  # Auto-detects GPU to apply the correct freeworld drivers
-  if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi 'amd\|radeon\|ati'; then
+  # Inspect hardware once and distinguish query failure from absent hardware.
+  local GPU_DEVICES
+  if ! GPU_DEVICES=$(gpu_devices); then
+    warning "Cannot inspect GPUs; skipping hardware-specific codec changes."
+    return 1
+  fi
+  if gpu_vendor_present 1002; then
     step "AMD GPU detected — installing mesa freeworld drivers"
     if rpm -q mesa-va-drivers &>/dev/null && ! rpm -q mesa-va-drivers-freeworld &>/dev/null; then
       try sudo dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld
@@ -212,7 +323,7 @@ install_codecs() {
     fi
   fi
 
-  if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi 'intel'; then
+  if gpu_vendor_present 8086; then
     step "Intel GPU detected — installing intel-media-driver"
     try sudo dnf install -y --skip-unavailable intel-media-driver libva-intel-driver
   fi
@@ -384,29 +495,6 @@ remove_flatpak_app() {
   [[ "$failures" -eq 0 ]]
 }
 
-migrate_usb_writer() {
-  # Never remove the old USB writer until its replacement is installed.
-  if ! rpm_app_installed mediawriter; then
-    warning "Fedora Media Writer is missing; keeping Popsicle until installation succeeds."
-    return 1
-  fi
-  local failures=0
-  remove_flatpak_app com.system76.Popsicle || failures=1
-  if rpm -q popsicle &>/dev/null; then
-    if sudo dnf remove -y popsicle && ! rpm -q popsicle &>/dev/null; then
-      ok "Popsicle RPM removed."
-    else
-      warning "Popsicle RPM removal failed. See $LOG_FILE"
-      failures=1
-    fi
-  fi
-  [[ "$failures" -eq 0 ]]
-}
-
-install_usb_writer() {
-  install_rpm_apps mediawriter && migrate_usb_writer
-}
-
 extension_installed() {
   [[ -f "${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$1/metadata.json" ||
      -f "/usr/share/gnome-shell/extensions/$1/metadata.json" ]]
@@ -436,9 +524,6 @@ verify_app_inventory() {
     ok "All expected RPM apps, Flatpaks and extensions are installed."
   else
     warning "$missing expected item(s) missing. Review the names above and $LOG_FILE"
-  fi
-  if flatpak_app_installed com.system76.Popsicle || rpm -q popsicle &>/dev/null; then
-    warning "Popsicle is still installed. Use menu [u] to migrate to Fedora Media Writer."
   fi
 }
 
@@ -565,30 +650,27 @@ install_rpms() {
   # Install each app independently so one unavailable package cannot block others.
 
   install_rpm_apps "${RPM_APP_PACKAGES[@]}"
-  migrate_usb_writer
 
   install_personal_rpms
 
-  # ── NordVPN — official installer (handles repo + GPG + install) ──
   step "NordVPN"
+  local nord_installer
   if ! command -v nordvpn &>/dev/null; then
-    if curl -sSf --max-time 10 -o /dev/null https://downloads.nordcdn.com/apps/linux/install.sh 2>/dev/null; then
-      step "Running official NordVPN installer (CLI + GUI)"
-      if sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh) -p nordvpn-gui; then
-        ok "NordVPN installed."
-        try sudo systemctl enable --now nordvpnd
-        try sudo usermod -aG nordvpn "$USER"
-        ok "Log in with: nordvpn login"
-        warning "Group membership requires logout/reboot. For immediate use: newgrp nordvpn"
-      else
-        warning "NordVPN installer failed. Try manually after reboot:"
-        echo "  sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh)"
-      fi
+    nord_installer=$(mktemp) || { warning "Cannot prepare NordVPN download."; return 1; }
+    if curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+        --connect-timeout 15 --max-time 180 \
+        https://downloads.nordcdn.com/apps/linux/install.sh -o "$nord_installer" &&
+        [[ -s "$nord_installer" ]] && sh "$nord_installer" -p nordvpn-gui &&
+        rpm_app_installed nordvpn && rpm_app_installed nordvpn-gui; then
+      ok "NordVPN CLI and GUI installation confirmed."
+      try sudo systemctl enable --now nordvpnd
+      try sudo usermod -aG nordvpn "$USER"
+      note "Log out and back in before using NordVPN. Log in with: nordvpn login"
     else
-      warning "Cannot reach nordcdn.com — skipping NordVPN."
+      warning "NordVPN installation could not be confirmed. See $LOG_FILE"
     fi
+    rm -f -- "$nord_installer"
   else
-    ok "NordVPN CLI already installed."
     install_rpm_apps nordvpn-gui
   fi
 }
@@ -599,21 +681,23 @@ install_rpms() {
 # ─────────────────────────────────────────────
 install_freeoffice() {
   info "[FREEOFFICE] Installing FreeOffice 2024"
-
-  # Check connectivity before attempting curl | bash
-  if ! curl -fsSL --max-time 5 -o /dev/null https://softmaker.net/down/install-softmaker-freeoffice-2024.sh 2>/dev/null; then
-    warning "Cannot reach softmaker.net — skipping FreeOffice installation."
-    warning "Install manually when connected:"
-    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
-    return
+  local installer
+  if rpm_app_installed softmaker-freeoffice-2024; then
+    ok "FreeOffice already installed."
+    return 0
   fi
-
-  step "Downloading and running official installer"
-  if curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash; then
-    ok "FreeOffice installed successfully."
+  installer=$(mktemp) || { warning "Cannot prepare FreeOffice download."; return 1; }
+  if curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+      --connect-timeout 15 --max-time 180 \
+      https://softmaker.net/down/install-softmaker-freeoffice-2024.sh -o "$installer" &&
+      [[ -s "$installer" ]] && sudo bash "$installer" &&
+      rpm_app_installed softmaker-freeoffice-2024; then
+    rm -f -- "$installer"
+    ok "FreeOffice installation confirmed."
   else
-    warning "Failed to install FreeOffice. Try manually:"
-    echo "  curl -fsSL https://softmaker.net/down/install-softmaker-freeoffice-2024.sh | sudo bash"
+    rm -f -- "$installer"
+    warning "FreeOffice installation failed or its package is missing. LibreOffice will be kept."
+    return 1
   fi
 }
 
@@ -622,9 +706,20 @@ install_freeoffice() {
 # ─────────────────────────────────────────────
 install_flatpaks() {
   info "[FLATPAK] Installing apps from Flathub"
+  local app failures=0
 
-  try flatpak remote-add --system --if-not-exists flathub \
-    https://flathub.org/repo/flathub.flatpakrepo
+  if ! command -v flatpak >/dev/null; then
+    if ! ensure_sudo || ! sudo dnf install -y flatpak || ! command -v flatpak >/dev/null; then
+      warning "Flatpak is unavailable. Cannot install Flatpak applications."
+      return 1
+    fi
+  fi
+
+  if ! flatpak remote-add --system --if-not-exists flathub \
+      https://flathub.org/repo/flathub.flatpakrepo; then
+    warning "Could not configure Flathub. Resolve this error before retrying Flatpak installation."
+    return 1
+  fi
 
 
   for app in "${FLATPAK_IDS[@]}"; do
@@ -639,11 +734,15 @@ install_flatpaks() {
       ok "$app installation confirmed."
     else
       warning "$app NOT installed successfully. See $LOG_FILE"
+      failures=$((failures + 1))
     fi
   done
 
   # Connections is installed from the Fedora remote on the reference PC.
-  try flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org
+  if ! flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org; then
+    warning "Could not configure the Fedora Flatpak remote for Connections."
+    return 1
+  fi
   if flatpak_app_installed org.gnome.Connections; then
     ok "Connections already installed."
   elif flatpak install --system -y fedora org.gnome.Connections &&
@@ -651,7 +750,9 @@ install_flatpaks() {
     ok "Connections installation confirmed."
   else
     warning "Connections NOT installed successfully. See $LOG_FILE"
+    failures=$((failures + 1))
   fi
+  [[ "$failures" -eq 0 ]]
 }
 
 # ─────────────────────────────────────────────
@@ -659,62 +760,126 @@ install_flatpaks() {
 # Called by install_nvidia() after detection/confirmation
 # ─────────────────────────────────────────────
 _nvidia_do_install() {
-  # Secure Boot warning
-  if command -v mokutil &>/dev/null && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
-    warning "Secure Boot is ENABLED."
-    warning "After installation you will need to manually sign the akmod module."
-    warning "See: https://rpmfusion.org/Howto/Secure%20Boot"
-    read -rp "  Continue anyway? [y/N]: " SB_CONFIRM
-    [[ "${SB_CONFIRM,,}" != "y" ]] && { warning "NVIDIA installation cancelled."; return; }
+  local sb_state target_kernel module_signer CUDA_CONFIRM nvcc_path repo_file repo_id
+  # Unknown Secure Boot state must not be mistaken for disabled.
+  if [[ -d /sys/firmware/efi ]]; then
+    if ! command -v mokutil >/dev/null; then
+      sudo dnf install -y mokutil || { warning "Cannot check Secure Boot."; return 1; }
+    fi
+    sb_state=$(LC_ALL=C mokutil --sb-state 2>&1) || { warning "Cannot determine Secure Boot state: $sb_state"; return 1; }
+    if [[ "$sb_state" == *enabled* ]]; then
+      if ! sudo mokutil --test-key /etc/pki/akmods/certs/public_key.der >/dev/null 2>&1; then
+        warning "Secure Boot is enabled and the akmods signing key is not enrolled. NVIDIA setup paused."
+        note "Follow https://rpmfusion.org/Howto/Secure%20Boot to generate/enroll the akmods key, reboot to confirm enrollment, then run option [6]."
+        return 1
+      fi
+    elif [[ "$sb_state" != *disabled* ]]; then
+      warning "Unrecognized Secure Boot state: $sb_state"
+      return 1
+    fi
+  else
+    sb_state=disabled
   fi
 
-  step "Installing NVIDIA driver from RPM Fusion (akmod)"
-  # cuda-toolkit does NOT exist in RPM Fusion. xorg-x11-drv-nvidia-cuda already
-  # enables CUDA/NVENC/NVDEC support for apps (Blender, OBS, etc.).
-  # For the full CUDA Toolkit (nvcc, headers), see the prompt below.
-  try sudo dnf install -y --skip-unavailable \
-    akmod-nvidia \
-    xorg-x11-drv-nvidia \
-    xorg-x11-drv-nvidia-cuda \
-    xorg-x11-drv-nvidia-cuda-libs \
-    xorg-x11-drv-nvidia-power \
-    nvidia-settings \
-    nvidia-vaapi-driver \
-    libva-utils \
-    vdpauinfo
-
-  step "Building akmod module (may take a few minutes...)"
-  try sudo akmods --force
-
-  step "Regenerating initramfs"
-  try sudo dracut --force
-
-  step "Enabling NVIDIA power management services"
+  # Build for the newest installed kernel, which may differ after an upgrade.
+  if ! target_kernel=$(rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1); then
+    warning "Cannot query installed kernels."
+    return 1
+  fi
+  if [[ -z "$target_kernel" || ! -d "/usr/lib/modules/$target_kernel" ]]; then
+    warning "Cannot determine the installed target kernel."
+    return 1
+  fi
+  step "Installing NVIDIA driver from RPM Fusion for kernel $target_kernel"
+  if ! sudo dnf install -y \
+      "kernel-devel-$target_kernel" akmod-nvidia xorg-x11-drv-nvidia \
+      xorg-x11-drv-nvidia-cuda xorg-x11-drv-nvidia-cuda-libs \
+      xorg-x11-drv-nvidia-power nvidia-settings; then
+    warning "NVIDIA package installation failed. Stopping this stage."
+    return 1
+  fi
+  if ! rpm -q akmod-nvidia xorg-x11-drv-nvidia-cuda &>/dev/null; then
+    warning "Required NVIDIA packages are still missing."
+    return 1
+  fi
+  if ! sudo akmods --force --kernels "$target_kernel" ||
+     ! modinfo -k "$target_kernel" nvidia &>/dev/null; then
+    warning "NVIDIA module build failed for $target_kernel. Check /var/cache/akmods/."
+    return 1
+  fi
+  if [[ "$sb_state" == *enabled* ]]; then
+    module_signer=$(modinfo -k "$target_kernel" -F signer nvidia)
+    if [[ -z "$module_signer" ]]; then
+      warning "NVIDIA module is unsigned; Secure Boot would reject it."
+      return 1
+    fi
+  fi
+  if ! sudo dracut --force --kver "$target_kernel"; then
+    warning "Could not regenerate initramfs for $target_kernel."
+    return 1
+  fi
   try sudo systemctl enable nvidia-hibernate nvidia-resume nvidia-suspend
+  install_rpm_apps nvidia-vaapi-driver libva-utils vdpauinfo
+  ok "NVIDIA packages and module installed for $target_kernel; runtime validation follows after reboot."
+  note "The GPU model must be supported by this driver branch; older cards may require a legacy branch."
 
   echo
-  echo -e "${BOLD}── Full CUDA Toolkit? ──${NC}"
-  echo "The installed driver already provides CUDA support for apps (Blender, OBS, etc.)."
-  echo "The FULL CUDA Toolkit (nvcc, cuBLAS headers, samples) requires the official NVIDIA repo."
-  read -rp "  Add the official NVIDIA CUDA repo now? [y/N]: " CUDA_CONFIRM
-  if [[ "${CUDA_CONFIRM,,}" == "y" ]]; then
-    step "Adding official NVIDIA CUDA repository for Fedora ${FEDORA_VER}"
-    try sudo dnf config-manager addrepo \
-      --from-repofile="https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VER}/$(uname -m)/cuda-fedora${FEDORA_VER}.repo"
-    try sudo dnf clean all
-
-    # Exclude packages that conflict with RPM Fusion
-    try sudo dnf config-manager setopt \
-      "cuda-fedora${FEDORA_VER}-$(uname -m).exclude=nvidia-driver,nvidia-modprobe,nvidia-persistenced,nvidia-settings,nvidia-libXNVCtrl,nvidia-xconfig"
-
-    step "Installing cuda-toolkit (nvcc, libs, headers)"
-    try sudo dnf install -y cuda-toolkit
-    ok "CUDA Toolkit installed. Run 'nvcc --version' after rebooting."
-  else
-    ok "Driver-only CUDA support (no nvcc). Sufficient for most applications."
+  note "The full CUDA Toolkit adds the nvcc compiler and development libraries."
+  read -rp "  Install the optional NVIDIA CUDA Toolkit? [y/N]: " CUDA_CONFIRM || return 0
+  [[ "${CUDA_CONFIRM,,}" == y ]] || return 0
+  if [[ "$(uname -m)" != x86_64 ]]; then
+    warning "This Fedora CUDA repository path is supported here only for x86_64."
+    return 1
   fi
-
-  ok "NVIDIA driver installed. Reboot to load the kernel module."
+  repo_id="cuda-fedora${FEDORA_VER}-x86_64"
+  repo_file=$(mktemp --suffix=.repo) || return 1
+  if ! curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+      --connect-timeout 15 --max-time 60 \
+      "https://developer.download.nvidia.com/compute/cuda/repos/fedora${FEDORA_VER}/x86_64/cuda-fedora${FEDORA_VER}.repo" -o "$repo_file"; then
+    rm -f -- "$repo_file"
+    warning "CUDA repository unavailable for this Fedora version; Toolkit was not installed."
+    return 1
+  fi
+  # Install a validated repo file with exclusions already applied, avoiding a
+  # window where the NVIDIA repository could replace RPM Fusion's driver.
+  if ! grep -qxF "[$repo_id]" "$repo_file" || [[ $(grep -c '^\[' "$repo_file") != 1 ]]; then
+    rm -f -- "$repo_file"
+    warning "Unexpected CUDA repository configuration."
+    return 1
+  fi
+  if ! sed -i '/^[[:space:]]*exclude[[:space:]]*=/d; /^[[:space:]]*excludepkgs[[:space:]]*=/d' "$repo_file" ||
+     ! printf '\nexcludepkgs=nvidia* libnvidia* kmod-nvidia* akmod-nvidia* xorg-x11-drv-nvidia* cuda-drivers*\n' >> "$repo_file"; then
+    rm -f -- "$repo_file"
+    warning "Could not prepare CUDA repository protections."
+    return 1
+  fi
+  if [[ -f "/etc/yum.repos.d/cuda-fedora${FEDORA_VER}.repo" ]] &&
+     ! sudo cp -p -- "/etc/yum.repos.d/cuda-fedora${FEDORA_VER}.repo" "/etc/yum.repos.d/cuda-fedora${FEDORA_VER}.repo.backup-$(date +%Y%m%d-%H%M%S)"; then
+    rm -f -- "$repo_file"
+    warning "Could not back up the existing CUDA repository configuration."
+    return 1
+  fi
+  if ! sudo install -m 0644 "$repo_file" "/etc/yum.repos.d/cuda-fedora${FEDORA_VER}.repo"; then
+    rm -f -- "$repo_file"
+    warning "Could not configure CUDA repository."
+    return 1
+  fi
+  rm -f -- "$repo_file"
+  if ! sudo dnf install -y --refresh cuda-toolkit || ! rpm -q cuda-toolkit &>/dev/null; then
+    warning "CUDA Toolkit installation failed. NVIDIA driver status is separate."
+    return 1
+  fi
+  if ! nvcc_path=$(find_nvcc system) || ! "$nvcc_path" --version; then
+    warning "Toolkit package is present, but nvcc could not be verified."
+    return 1
+  fi
+  if ! printf 'export PATH=%q${PATH:+:${PATH}}\n' "${nvcc_path%/*}" |
+      sudo tee /etc/profile.d/fedora-y2k-cuda.sh >/dev/null; then
+    warning "Could not configure CUDA PATH. Compiler: $nvcc_path"
+    return 1
+  fi
+  ok "CUDA compiler verified. Open a new login shell to use nvcc from PATH."
+  note "GPU execution and host-compiler compatibility still require a CUDA program test."
 }
 
 # ─────────────────────────────────────────────
@@ -725,58 +890,23 @@ _nvidia_do_install() {
 # ─────────────────────────────────────────────
 install_nvidia() {
   info "[NVIDIA] Detecting GPU"
-
-  # Precise filter using PCI class codes:
-  #   0300 = VGA, 0302 = 3D controller, 0380 = Display controller
-  if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi nvidia; then
-    GPU_INFO="$(lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -i nvidia | head -1)"
-    echo
-    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
-    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
-    echo
-    ok "NVIDIA GPU detected: $GPU_INFO"
-    echo
-    echo -e "${YELLOW}  The NVIDIA driver will now be installed.${NC}"
-    echo -e "${YELLOW}  This process takes several minutes and requires a REBOOT.${NC}"
-    echo
-    echo -e "${RED}  ▶ To confirm, type  yes  and press ENTER${NC}"
-    echo -e "${RED}  ▶ To skip,    type  no   and press ENTER${NC}"
-    echo
-    read -rp "  Install NVIDIA driver? [yes/no]: " GPU_CONFIRM
-    if [[ "${GPU_CONFIRM,,}" != "yes" ]]; then
-      ok "Skipping NVIDIA driver installation."
-      return
-    fi
-    _nvidia_do_install
-    return
+  local GPU_DEVICES GPU_CONFIRM mode="${1:-manual}"
+  if ! GPU_DEVICES=$(gpu_devices); then
+    warning "GPU detection failed. Check pciutils; NVIDIA installation skipped."
+    return 1
   fi
-
-  # GPU not detected — ask to force install
-  # Useful when booting with onboard GPU (desktop) or pre-installing for a future card
-  echo
-  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║              ⚠  NVIDIA DRIVER INSTALLATION  ⚠                ║${NC}"
-  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
-  echo
-  echo -e "${YELLOW}  No NVIDIA GPU was detected via lspci.${NC}"
-  echo
-  echo -e "${CYAN}  This is expected if you are:${NC}"
-  echo -e "${CYAN}  • Booting with onboard/integrated GPU while NVIDIA card is present${NC}"
-  echo -e "${CYAN}  • Pre-installing the driver before the card is physically installed${NC}"
-  echo
-  echo -e "${YELLOW}  Only proceed if you are SURE you have an NVIDIA GPU.${NC}"
-  echo -e "${YELLOW}  If unsure, press N and skip this step.${NC}"
-  echo
-  echo -e "${RED}  ▶ To confirm, type  yes  and press ENTER${NC}"
-  echo -e "${RED}  ▶ To skip,    type  no   and press ENTER${NC}"
-  echo
-  read -rp "  Install NVIDIA driver? [yes/no]: " FORCE_CONFIRM
-  if [[ "${FORCE_CONFIRM,,}" == "yes" ]]; then
-    _nvidia_do_install
+  if gpu_vendor_present 10de; then
+    note "NVIDIA display device(s):"
+    awk '$3 ~ /^10de:/ {print}' <<< "$GPU_DEVICES"
+  elif [[ "$mode" == auto ]]; then
+    note "No NVIDIA GPU detected; skipping NVIDIA and CUDA."
+    return 0
   else
-    ok "Skipping NVIDIA driver installation."
+    warning "No NVIDIA GPU detected. Only force installation for hardware you know is supported."
   fi
+  read -rp "  Install NVIDIA driver? Type yes to confirm: " GPU_CONFIRM || return 0
+  [[ "${GPU_CONFIRM,,}" == yes ]] || { note "NVIDIA installation skipped."; return 0; }
+  _nvidia_do_install
 }
 
 # ─────────────────────────────────────────────
@@ -796,7 +926,10 @@ install_gnome_extensions() {
 
   if ! command -v gext &>/dev/null; then
     step "Installing gnome-extensions-cli via pipx"
-    try pipx install gnome-extensions-cli
+    if ! command -v pipx >/dev/null; then
+      ensure_sudo && install_rpm_apps pipx || return 1
+    fi
+    pipx install gnome-extensions-cli || { warning "Could not install extension manager CLI."; return 1; }
     export PATH="$HOME/.local/bin:$PATH"
   fi
 
@@ -837,22 +970,28 @@ install_gnome_extensions() {
 # ─────────────────────────────────────────────
 remove_bloat() {
   info "[CLEANUP] Removing bloatware"
-  warning "Run this step AFTER installing everything to avoid dependency issues."
+  note "Only removing replaced apps when their replacements are installed."
+  local warnings_before=${WARN_COUNT:-0}
 
   # Backup the package list before removing anything (recovery aid)
   BACKUP_FILE="$HOME/fedora-y2k-packages-before-cleanup-$(date +%Y%m%d-%H%M%S).txt"
   step "Backing up current package list to $BACKUP_FILE"
   if rpm -qa | sort > "$BACKUP_FILE" 2>/dev/null; then
-    ok "Backup saved (restore with: sudo dnf install \$(cat $BACKUP_FILE))."
+    ok "Package inventory saved for recovery review: $BACKUP_FILE"
   else
     warning "Failed to write backup."
   fi
 
   step "Removing LibreOffice (replaced by FreeOffice)"
-  try sudo dnf remove -y 'libreoffice*'
+  if rpm_app_installed softmaker-freeoffice-2024; then
+    try sudo dnf remove -y 'libreoffice*'
+  else
+    warning "Keeping LibreOffice: FreeOffice installation is not confirmed."
+  fi
 
   step "Removing default GNOME media players (replaced by VLC)"
   # Covers both: Fedora ≤42 (Totem) and Fedora ≥43 (Showtime/Decibels)
+  if rpm_app_installed vlc; then
   try sudo dnf remove -y \
     showtime \
     decibels \
@@ -860,12 +999,23 @@ remove_bloat() {
     totem-video-thumbnailer \
     gnome-music \
     rhythmbox
+  else
+    warning "Keeping media players: VLC is not installed."
+  fi
 
   step "Removing duplicate terminal (keeping Ptyxis, default since Fedora 41)"
-  try sudo dnf remove -y gnome-terminal
+  if rpm_app_installed ptyxis; then
+    try sudo dnf remove -y gnome-terminal
+  else
+    warning "Keeping GNOME Terminal: Ptyxis is not installed."
+  fi
 
   step "Removing RPM Extensions app (replaced by Extension Manager Flatpak)"
-  try sudo dnf remove -y gnome-extensions-app
+  if flatpak_app_installed com.mattjakeman.ExtensionManager; then
+    try sudo dnf remove -y gnome-extensions-app
+  else
+    warning "Keeping Extensions app: Extension Manager is not installed."
+  fi
 
   step "Removing unnecessary apps"
   try sudo dnf remove -y \
@@ -879,33 +1029,98 @@ remove_bloat() {
     'jack-audio-connection-kit*' \
     qjackctl
 
-  migrate_usb_writer
 
   step "Removing unnecessary Flatpaks"
   local obsolete_app
   for obsolete_app in \
     org.gnome.Showtime org.gnome.Decibels org.gnome.Totem org.gnome.Music \
     org.freedesktop.Piper org.gnome.Help com.usebruno.Bruno; do
+    case "$obsolete_app" in
+      org.gnome.Showtime|org.gnome.Decibels|org.gnome.Totem|org.gnome.Music)
+        rpm_app_installed vlc || continue ;;
+    esac
     remove_flatpak_app "$obsolete_app"
   done
 
   step "Cleaning orphan dependencies"
   try sudo dnf autoremove -y
 
+  if [[ "${WARN_COUNT:-0}" -gt "$warnings_before" ]]; then
+    note "Cleanup finished with warnings. Review failed removals and retained applications above."
+    return 1
+  fi
   ok "Cleanup complete."
 }
 
 # ─────────────────────────────────────────────
 # VISUAL SETTINGS & DEFAULT APPS
 # ─────────────────────────────────────────────
+
+configure_chrome_launcher() {
+  local source="$1" destination="$2" temporary
+  [[ -f "$source" ]] || { warning "Chrome launcher not found."; return 1; }
+  mkdir -p "${destination%/*}" || return 1
+  # Keep user customizations and modify only Chrome Exec entries.
+  [[ ! -f "$destination" ]] || source="$destination"
+  if ! grep -qE '^Exec=/usr/bin/google-chrome-stable([[:space:]]|$)' "$source"; then
+    warning "Custom Chrome launcher uses an unexpected executable; keeping it unchanged."
+    return 1
+  fi
+  temporary=$(mktemp "${destination}.XXXXXX") || return 1
+  if ! awk '
+    /^Exec=\/usr\/bin\/google-chrome-stable([[:space:]]|$)/ {
+      if ($0 !~ /--ozone-platform=/)
+        sub(/^Exec=\/usr\/bin\/google-chrome-stable/, "& --ozone-platform=wayland")
+      if ($0 !~ /TouchpadOverscrollHistoryNavigation/) {
+        if (match($0, /--enable-features=[^[:space:]]+/))
+          $0=substr($0,1,RSTART+RLENGTH-1) ",TouchpadOverscrollHistoryNavigation" substr($0,RSTART+RLENGTH)
+        else
+          sub(/^Exec=\/usr\/bin\/google-chrome-stable/, "& --enable-features=TouchpadOverscrollHistoryNavigation")
+      }
+    }
+    {print}
+  ' "$source" > "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  if [[ -f "$destination" ]] && ! cmp -s "$temporary" "$destination"; then
+    cp -p -- "$destination" "${destination}.backup-$(date +%Y%m%d-%H%M%S)" || {
+      rm -f -- "$temporary"; return 1;
+    }
+  fi
+  if ! chmod 644 "$temporary" || ! mv -f -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+set_media_defaults() {
+  local mime actual failures=0
+  for mime in "$@"; do
+    # Native tools preserve unrelated Added/Removed Associations sections.
+    xdg-mime default vlc.desktop "$mime" || true
+    gio mime "$mime" vlc.desktop >/dev/null 2>&1 || true
+    actual=$(xdg-mime query default "$mime") || actual=""
+    if [[ "$actual" != vlc.desktop ]]; then
+      warning "Could not confirm VLC as the default for $mime."
+      failures=$((failures + 1))
+    fi
+  done
+  [[ "$failures" -eq 0 ]]
+}
+
 apply_settings() {
   info "[SETTINGS] Applying GNOME settings and default apps"
+  local warnings_before=$WARN_COUNT wallpaper_tmp
+  local DESKTOP_SRC DESKTOP_DEST WALLPAPER_URL WALLPAPER_PATH
+  local -a MEDIA_TYPES
+  local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 
   if ! has_gui_session; then
     warning "No graphical session detected (no D-Bus session bus)."
     warning "Visual settings rely on gsettings/gio and must run inside your GNOME session."
     warning "Run option [8] from a terminal inside GNOME (not over SSH/TTY). Skipping."
-    return
+    return 1
   fi
 
   # ── Appearance ──
@@ -925,13 +1140,13 @@ apply_settings() {
 
   # ── Default browser: Google Chrome ──
   step "Setting Google Chrome as default web browser"
-  try xdg-settings set default-web-browser google-chrome.desktop
+  if [[ -f /usr/share/applications/google-chrome.desktop ]]; then
+    try xdg-settings set default-web-browser google-chrome.desktop
+  else
+    warning "Chrome is absent; keeping the current default browser."
+  fi
 
   # ── Default media player: VLC ──
-  # Uses three methods combined for reliability on modern GNOME:
-  #   1. xdg-mime  — writes to ~/.config/mimeapps.list
-  #   2. gio mime  — GNOME's own tool, overrides gnome-mimeapps.list entries
-  #   3. Direct write to mimeapps.list — guarantees persistence across sessions
   step "Setting VLC as default audio and video player"
 
   if [[ ! -f /usr/share/applications/vlc.desktop ]]; then
@@ -960,72 +1175,52 @@ apply_settings() {
     audio/webm
   )
 
-  for mime in "${MEDIA_TYPES[@]}"; do
-    try xdg-mime default vlc.desktop "$mime"
-    gio mime "$mime" vlc.desktop 2>/dev/null || true
-  done
-
-  # Direct write to mimeapps.list as final guarantee
-  MIMEAPPS="$HOME/.config/mimeapps.list"
-  mkdir -p "$HOME/.config"
-
-  # Ensure [Default Applications] section exists
-  if ! grep -q '^\[Default Applications\]' "$MIMEAPPS" 2>/dev/null; then
-    echo '[Default Applications]' >> "$MIMEAPPS"
+  if set_media_defaults "${MEDIA_TYPES[@]}"; then
+    ok "VLC defaults confirmed for the requested media types."
+  fi
   fi
 
-  # For each MIME type: remove any existing entry then add VLC
-  for mime in "${MEDIA_TYPES[@]}"; do
-    sed -i "/^${mime//\//\\/}=/d" "$MIMEAPPS" 2>/dev/null || true
-    sed -i "/^\[Default Applications\]/a ${mime}=vlc.desktop" "$MIMEAPPS"
-  done
-
-  ok "VLC set as default for audio and video (xdg-mime + gio mime + mimeapps.list)."
-  fi
-
-  # ── Chrome: Wayland + touchpad two-finger back/forward gestures ──
-  # Two complementary mechanisms (belt and suspenders) for the same two flags:
-  #   1. ~/.config/chrome-flags.conf — read by the launcher wrappers of several
-  #      Chrome/Chromium packagings (Arch's google-chrome, Flatpak, Chromium).
-  #      The official Google RPM may ignore it, but writing it is harmless and
-  #      also covers launches from the command line.
-  #   2. Patching the Exec= line of a user-level .desktop copy — this reliably
-  #      applies the flags when Chrome is opened from the dock or app grid.
-  step "Configuring Chrome for Wayland touchpad gestures"
-
-  FLAGS_FILE="$HOME/.config/chrome-flags.conf"
-  mkdir -p "$HOME/.config"
-  grep -qxF -- '--ozone-platform=wayland' "$FLAGS_FILE" 2>/dev/null \
-    || echo '--ozone-platform=wayland' >> "$FLAGS_FILE"
-  grep -qxF -- '--enable-features=TouchpadOverscrollHistoryNavigation' "$FLAGS_FILE" 2>/dev/null \
-    || echo '--enable-features=TouchpadOverscrollHistoryNavigation' >> "$FLAGS_FILE"
-
-  DESKTOP_SRC="/usr/share/applications/google-chrome.desktop"
-  DESKTOP_DEST="$HOME/.local/share/applications/google-chrome.desktop"
-  mkdir -p "$HOME/.local/share/applications"
-  if [[ -f "$DESKTOP_SRC" ]]; then
-    cp "$DESKTOP_SRC" "$DESKTOP_DEST"
-    sed -i '/^Exec=\/usr\/bin\/google-chrome-stable/ s|%U|--ozone-platform=wayland --enable-features=TouchpadOverscrollHistoryNavigation %U|g' "$DESKTOP_DEST"
-    ok "Chrome configured for Wayland and touchpad gestures."
-  else
-    warning "google-chrome.desktop not found — Chrome may not be installed yet. Re-run option [8] after installing Chrome."
+  # Apply Wayland flags only in a Wayland session. Preserve existing launchers.
+  if [[ "${XDG_SESSION_TYPE:-}" == wayland || -n "${WAYLAND_DISPLAY:-}" ]]; then
+    step "Configuring Chrome for Wayland touchpad gestures"
+    DESKTOP_SRC="/usr/share/applications/google-chrome.desktop"
+    DESKTOP_DEST="$data_home/applications/google-chrome.desktop"
+    if configure_chrome_launcher "$DESKTOP_SRC" "$DESKTOP_DEST"; then
+      ok "Chrome launcher configured; existing arguments preserved."
+    else
+      warning "Chrome launcher configuration was not completed."
+    fi
   fi
 
   # ── Wallpaper ──
   step "Downloading and applying wallpaper"
   WALLPAPER_URL="https://raw.githubusercontent.com/felipy2k/Fedora-Y2K/main/Y2K_Wallpaper.jpeg"
   WALLPAPER_PATH="$HOME/Pictures/Y2K_Wallpaper.jpeg"
-  mkdir -p "$HOME/Pictures"
-  if curl -fsSL "$WALLPAPER_URL" -o "$WALLPAPER_PATH"; then
-    try gsettings set org.gnome.desktop.background picture-uri      "file://$WALLPAPER_PATH"
-    try gsettings set org.gnome.desktop.background picture-uri-dark "file://$WALLPAPER_PATH"
-    try gsettings set org.gnome.desktop.background picture-options  'zoom'
-    ok "Wallpaper applied."
+  if mkdir -p "$HOME/Pictures" && wallpaper_tmp=$(mktemp "$HOME/Pictures/.y2k-wallpaper.XXXXXX"); then
+    if curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+        --connect-timeout 15 --max-time 180 "$WALLPAPER_URL" -o "$wallpaper_tmp" &&
+        [[ -s "$wallpaper_tmp" ]] && mv -f -- "$wallpaper_tmp" "$WALLPAPER_PATH"; then
+      if gsettings set org.gnome.desktop.background picture-uri "file://$WALLPAPER_PATH" &&
+         gsettings set org.gnome.desktop.background picture-uri-dark "file://$WALLPAPER_PATH" &&
+         gsettings set org.gnome.desktop.background picture-options zoom; then
+        ok "Wallpaper applied."
+      else
+        warning "Wallpaper downloaded, but desktop settings could not be applied."
+      fi
+    else
+      rm -f -- "$wallpaper_tmp"
+      warning "Wallpaper download failed; previous image preserved."
+    fi
   else
-    warning "Failed to download wallpaper. Check your connection."
+    warning "Cannot create the wallpaper download file."
   fi
 
-  ok "Settings applied."
+  if [[ "$WARN_COUNT" -eq "$warnings_before" ]]; then
+    ok "Settings applied."
+  else
+    warning "Some settings could not be applied; review the messages above."
+    return 1
+  fi
 }
 
 # ─────────────────────────────────────────────
@@ -1036,7 +1231,7 @@ verify_final() {
 
   echo
   echo -e "${BOLD}── Packages that should have been REMOVED ──${NC}"
-  REMOVED_CHECK=$(rpm -qa | grep -E \
+  REMOVED_CHECK=$(rpm -qa --qf '%{NAME}\n' | grep -E \
     "libreoffice|^showtime|^decibels|^totem|totem-video-thumbnailer|gnome-music|^rhythmbox|gnome-tour|gnome-weather|gnome-maps|^yelp|^dconf-editor|^htop|^piper|^gnome-terminal$|gnome-extensions-app" \
     2>/dev/null || true)
   if [[ -z "$REMOVED_CHECK" ]]; then
@@ -1055,7 +1250,7 @@ verify_final() {
   if rpm -q ffmpeg &>/dev/null && ! rpm -q ffmpeg-free &>/dev/null; then
     ok "Full ffmpeg installed (ffmpeg-free replaced)."
   else
-    warning "ffmpeg-free still present — proprietary codecs may be missing."
+    warning "Full ffmpeg is missing or ffmpeg-free remains installed."
   fi
 
   echo
@@ -1075,21 +1270,7 @@ verify_final() {
 
   echo
   echo -e "${BOLD}── NVIDIA GPU ──${NC}"
-  if lspci -d ::0300 -d ::0302 -d ::0380 2>/dev/null | grep -qi nvidia; then
-    if rpm -q akmod-nvidia &>/dev/null; then
-      ok "NVIDIA driver installed."
-      nvidia-smi 2>/dev/null | head -4 || warning "nvidia-smi not available (reboot to load the module)."
-      if command -v nvcc &>/dev/null; then
-        ok "Full CUDA Toolkit present: $(nvcc --version | grep release)"
-      else
-        echo "  ℹ CUDA Toolkit (nvcc) not installed — driver-only CUDA support active."
-      fi
-    else
-      warning "NVIDIA GPU detected but driver NOT installed."
-    fi
-  else
-    ok "No NVIDIA GPU (no driver needed)."
-  fi
+  verify_nvidia
 
   echo
   echo -e "${BOLD}── GNOME Extensions ──${NC}"
@@ -1131,12 +1312,12 @@ run_all() {
   # Reset warning counter for clean final summary
   WARN_COUNT=0
 
-  add_repos
-  update_system
+  add_repos || return 1
+  update_system || return 1
   install_rpms        # Installs everything (including codecs)
   install_freeoffice  # FreeOffice before removing LibreOffice
   install_flatpaks
-  install_nvidia
+  install_nvidia auto
   install_gnome_extensions
   remove_bloat        # Removes LibreOffice and bloat AFTER installing everything
   apply_settings      # Visual settings + default apps
@@ -1150,7 +1331,7 @@ run_all() {
   if [[ "$WARN_COUNT" -eq 0 ]]; then
     ok "Setup complete with no warnings!"
   else
-    warning "Setup complete with $WARN_COUNT warning(s) — review the log above."
+    note "Setup complete with $WARN_COUNT warning(s) — review the log above."
   fi
   echo "  Full log saved to: $LOG_FILE"
   echo -e "${YELLOW}⚠ Reboot the system to activate all drivers and settings.${NC}"
@@ -1160,26 +1341,22 @@ run_all() {
 # MAIN LOOP
 # ─────────────────────────────────────────────
 while true; do
-  show_menu
+  show_menu || break
 
   case "$CHOICE" in
     1) run_all ;;
-    2) ensure_sudo && { add_repos; update_system; } ;;
+    2) ensure_sudo && { add_repos && update_system; } ;;
     3) ensure_sudo && remove_bloat ;;
-    4) ensure_sudo && { add_repos; install_rpms; install_freeoffice; } ;;
+    4) ensure_sudo && { if add_repos; then install_rpms; install_freeoffice; fi; } ;;
     5) install_flatpaks ;;
-    6) ensure_sudo && { add_repos; install_nvidia; } ;;
+    6) ensure_sudo && { add_repos && install_nvidia; } ;;
     7) install_gnome_extensions ;;
     8) apply_settings ;;
-    9) verify_final ;;
-    u|U) ensure_sudo && install_usb_writer ;;
-    o|O) ensure_sudo && install_openlogi ;;
-    f|F) ensure_sudo && install_freeoffice ;;
     0) echo "Exiting."; exit 0 ;;
     r|R) echo "Rebooting..."; sudo reboot ;;
     *) warning "Invalid option." ;;
   esac
 
   echo
-  read -rp "Press ENTER to return to the menu..." _
+  read -rp "Press ENTER to return to the menu..." _ || break
 done
