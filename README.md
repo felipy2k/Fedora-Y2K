@@ -9,7 +9,7 @@
 
 **For NVIDIA installation, configure module signing or disable Secure Boot in your BIOS/UEFI.**
 
-The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to work with Secure Boot enabled. The script detects Secure Boot and asks whether to continue; it does not sign the module automatically.
+The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to work with Secure Boot enabled. The script checks Secure Boot and pauses NVIDIA setup if the akmods signing key is not enrolled. It verifies that the built module has a signature when Secure Boot is enabled.
 
 > 💡 **If you choose to disable Secure Boot:**
 > 1. Restart your computer and enter BIOS/UEFI (usually `F2`, `F10`, `F12` or `Del` during boot)
@@ -66,10 +66,6 @@ bash Fedora-Y2K.sh
 ║  [6] Install NVIDIA driver + CUDA only                        ║
 ║  [7] Install GNOME extensions only                            ║
 ║  [8] Apply visual settings only                               ║
-║  [9] Final verification                                       ║
-║  [u] Install Media Writer and remove Popsicle                 ║
-║  [o] Install OpenLogi only                                    ║
-║  [f] Install FreeOffice only                                  ║
 ║  [0] Exit                                                     ║
 ║  [r] Exit and reboot the system                               ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -78,7 +74,7 @@ bash Fedora-Y2K.sh
 **Option [1] Run EVERYTHING** — execution order:
 
 ```
-repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions → Remove bloat → Settings → best=False
+repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions → Remove bloat → Settings → best=False → Final verification
 ```
 
 ---
@@ -86,6 +82,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ## ✨ What gets installed
 
 ### 📦 Repositories
+
 | | |
 |---|---|
 | 🔴 | RPM Fusion Free + Nonfree + Tainted |
@@ -98,8 +95,9 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ---
 
 ### 🎬 Multimedia Codecs
+
 - 🔄 Swaps `ffmpeg-free` → full `ffmpeg` (H.264, H.265, AAC, MP3…) — **idempotent**
-- 🎛️ Full GStreamer stack — **DNF5/Fedora 44 compatible** (individual packages, no broken group commands)
+- 🎛️ Full GStreamer stack — **explicit RPM package list**
 - ⚡ Hardware acceleration auto-detected by GPU:
   - 🔴 **AMD** → `mesa-va-drivers-freeworld` + `mesa-vdpau-drivers-freeworld`
   - 🔵 **Intel** → `intel-media-driver` + `libva-intel-driver`
@@ -108,14 +106,15 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ---
 
 ### 🖥️ NVIDIA Driver + CUDA
+
 - 🔍 GPU detection via PCI display-device class codes
-- 🔐 Secure Boot detection with confirmation prompt
+- 🔐 Secure Boot and enrolled akmods signing-key checks
 - 📦 RPM Fusion: `akmod-nvidia`, `xorg-x11-drv-nvidia-cuda`, `nvidia-settings`, `nvidia-vaapi-driver`
-- 🔨 Builds kernel module (`akmods --force`) + regenerates initramfs (`dracut --force`)
+- 🔨 Builds and checks the module for the newest installed kernel, then regenerates its initramfs
 - ⚡ Enables power services: `nvidia-hibernate`, `nvidia-resume`, `nvidia-suspend`
 - 🧪 Optional: full CUDA Toolkit (`nvcc`, cuBLAS, headers) via official NVIDIA repo
 - 🟢 **GPU detected** → asks for confirmation (`yes`) before installation
-- 🟡 **GPU not detected** → explains why and asks to confirm — install proceeds if confirmed
+- 🟡 **GPU not detected** → complete setup skips NVIDIA; option **[6]** allows explicit confirmation for supported hardware
 
 ---
 
@@ -171,8 +170,8 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | ⚙️ Setting | 🎯 Value |
 |---|---|
 | 🌐 Web browser | Google Chrome |
-| 🎬 Video player | VLC (via xdg-mime + gio mime + mimeapps.list) |
-| 🎵 Audio player | VLC (same 3-method approach) |
+| 🎬 Video player | VLC (via xdg-mime + gio mime, with verification) |
+| 🎵 Audio player | VLC (via xdg-mime + gio mime, with verification) |
 | 🪟 Title bar | Minimize + Maximize + Close (right side) |
 | 🚀 Dock | Chrome · Files · Text Editor · Ptyxis · Calculator · App Grid |
 | 👆 Chrome touchpad | Two-finger swipe back/forward (Wayland flags) |
@@ -183,13 +182,12 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 
 | ❌ Type | 🗑️ What goes away |
 |---|---|
-| 📝 Office | LibreOffice → replaced by FreeOffice |
+| 📝 Office | LibreOffice → replaced after FreeOffice installation is confirmed |
 | 🎬 Video | Showtime, Totem, totem-video-thumbnailer |
 | 🎵 Audio | Decibels, GNOME Music, Rhythmbox |
 | 💻 Terminal | GNOME Terminal → keeps **Ptyxis** (default since Fedora 41) |
 | 🧩 Extensions | gnome-extensions-app → replaced by Extension Manager Flatpak |
 | 🗑️ Other | GNOME Tour, Weather, Maps, Yelp, dconf-editor, htop, Piper, JACK, QjackCtl, Bruno Flatpak |
-| 💾 USB writer | Popsicle — only when Fedora Media Writer is confirmed installed |
 
 ---
 
@@ -226,21 +224,21 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 <details>
 <summary>⚠️ RPM Fusion update conflicts</summary>
 
-When Fedora releases a system update and RPM Fusion hasn't yet published the matching freeworld package, DNF/GNOME Software can throw confusing dependency errors. The script sets `best=False` in `/etc/dnf/dnf.conf` **after the installation steps**. This can help with package-selection conflicts but does not guarantee that all dependency problems will be resolved.
+When Fedora releases a system update and RPM Fusion hasn't yet published the matching freeworld package, DNF/GNOME Software can throw confusing dependency errors. The script sets `best=False` through DNF configuration **after the installation steps**. This can help with package-selection conflicts but does not guarantee that all dependency problems will be resolved.
 </details>
 
 <details>
 <summary>🟢 NVIDIA + Secure Boot</summary>
 
-If Secure Boot is enabled, the script detects it and prompts for confirmation. After installation, the `akmod` module must be manually signed. See: [RPM Fusion — Secure Boot](https://rpmfusion.org/Howto/Secure%20Boot)
+If Secure Boot is enabled, the akmods signing key must be enrolled before NVIDIA setup proceeds. The script checks enrollment and the built module signature. See: [RPM Fusion — Secure Boot](https://rpmfusion.org/Howto/Secure%20Boot)
 
-**GPU not detected?** This can happen when booting with the onboard/integrated GPU, or when pre-installing the driver before the card is physically inserted. The script detects this, explains it, and asks for confirmation — type `yes` to proceed with the driver installation. Typical workflow: install driver → reboot → switch to NVIDIA in BIOS.
+**GPU not detected?** The complete setup skips NVIDIA when no NVIDIA display device is enumerated. Option **[6]** allows an explicitly confirmed installation for supported hardware. GPU detection uses numeric PCI manufacturer and display-class IDs.
 </details>
 
 <details>
 <summary>🧪 CUDA Toolkit</summary>
 
-The RPM Fusion driver already includes CUDA runtime for apps (Blender, OBS, etc.). The full Toolkit (`nvcc`, cuBLAS, headers) is optional — installed from the official NVIDIA repo upon confirmation, with automatic conflict exclusion against RPM Fusion packages.
+The RPM Fusion driver already includes CUDA runtime for apps (Blender, OBS, etc.). The full Toolkit (`nvcc`, cuBLAS, headers) is optional — installed from the official NVIDIA repo upon confirmation, with driver-package exclusions applied before repository transactions to keep the RPM Fusion driver. Installation errors stop the affected stage. The compiler is checked separately from the running driver; GPU execution still needs validation on NVIDIA hardware after reboot.
 </details>
 
 <details>
@@ -252,13 +250,13 @@ Installed via the official NordVPN installer (`downloads.nordcdn.com`) — handl
 <details>
 <summary>🤖 ChatGPT</summary>
 
-Downloaded from the official RPM source for `x86_64` or `aarch64` in options **[1]** and **[4]**. The RPM includes its signing key and update repository. The script checks the package identity and installation result. No `assets/` folder is required. Already installed copies are skipped; sign in through the app after installation.
+Downloaded from the official RPM source in options **[1]** and **[4]**. The complete application catalog targets `x86_64`. The RPM includes its signing key and update repository. The script checks the package identity and installation result. No `assets/` folder is required. Already installed copies are skipped; sign in through the app after installation.
 </details>
 
 <details>
 <summary>🖱️ OpenLogi</summary>
 
-Installs **v0.8.1** from the developer's GitHub release for `amd64` or `arm64`, verifies SHA-256 and confirms installation. Use **[o]** to install only OpenLogi. Launch with `openlogi-desktop`. To enable its background agent:
+Installs **v0.8.1** from the developer's GitHub release, verifies SHA-256 and confirms installation. The complete application catalog targets `x86_64` (the `amd64` RPM). Included in **[1] Run EVERYTHING** and **[4] Install RPM packages + FreeOffice**. Launch with `openlogi-desktop`. To enable its background agent:
 
 ```bash
 systemctl --user enable --now openlogi-agent.service
@@ -270,24 +268,21 @@ ChatGPT and OpenLogi preserve the downloaded RPM and print a retry command if DN
 <details>
 <summary>💾 Fedora Media Writer</summary>
 
-Use **[u]** to install `mediawriter` and remove Popsicle. Removal checks the user/system Flatpak copies and the RPM package. Popsicle is kept if Media Writer is missing. This check also runs during RPM installation and cleanup.
+Fedora Media Writer (`mediawriter`) is included in the RPM application list. If it is already installed, the script keeps it and skips installation. It is not targeted by cleanup.
 </details>
 
 <details>
 <summary>🎬 VLC as default player</summary>
 
-GNOME's system-level `gnome-mimeapps.list` can override user settings. The script uses **three methods simultaneously** — `xdg-mime`, `gio mime`, and direct `~/.config/mimeapps.list` writes — covering 19 MIME types.
+The script uses `xdg-mime` and `gio mime` for 19 MIME types, then checks the effective default for each type. Existing unrelated associations are preserved.
 </details>
 
 <details>
 <summary>👆 Chrome touchpad gestures</summary>
 
-Two complementary mechanisms apply `--ozone-platform=wayland` and `--enable-features=TouchpadOverscrollHistoryNavigation`:
+In a Wayland session, the script configures the user-level Chrome `.desktop` launcher with `--ozone-platform=wayland` and `TouchpadOverscrollHistoryNavigation`. Existing arguments and customizations are preserved, with a backup before changing an existing launcher. The launcher respects `XDG_DATA_HOME`.
 
-1. **`~/.config/chrome-flags.conf`** — read by the launcher wrappers of several Chrome/Chromium packagings (and covers command-line launches). Harmless if a given build ignores it.
-2. **A user-level `.desktop` copy** with the flags added to its `Exec=` line — reliably applies them when Chrome is opened from the dock or app grid.
-
-Idempotent — safe to re-run.
+Repeated runs do not duplicate these flags.
 </details>
 
 <details>
@@ -305,10 +300,10 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 - 🔒 **Individual installs** — repository RPM applications are installed and checked separately; one failing package does not block the others
 - 💾 **Package backup** — full RPM list saved before bloat removal
 - 💿 **Disk space check** — warns if less than 15 GB free
-- 🐧 **Kernel limit** — sets `installonly_limit=2` to limit retained kernel versions
-- 📊 **Final verification** — checks every expected RPM, Flatpak and extension; reports missing items by name, warning count and log path
+- 🐧 **Kernel limit** — sets `installonly_limit=3` to retain fallback kernel versions
+- 📊 **Automatic final verification** — runs at the end of the complete setup, before the summary; checks every expected RPM, Flatpak and extension; reports missing items by name, warning count and log path
 - 🔄 **Repeat runs** — installed catalog RPM apps and Flatpaks are detected and skipped
-- 🚫 **Failure reporting** — application failures produce warnings while subsequent installations continue
+- 🚫 **Failure reporting** — a failed system upgrade stops the complete setup; individual application failures are reported while the remaining applications continue
 </details>
 
 ---
