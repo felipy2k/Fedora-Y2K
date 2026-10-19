@@ -2,9 +2,16 @@
 
 set -uo pipefail
 
+SCRIPT_VERSION="2026.10.19-r3"
+if [[ "${1:-}" == --version ]]; then
+  printf 'Fedora Y2K %s\n' "$SCRIPT_VERSION"
+  exit 0
+fi
+
 # Setup logging — captures all output to a timestamped log file in $HOME
 LOG_FILE="$HOME/fedora-y2k-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
+printf 'Fedora Y2K %s | Script: %s\nLog: %s\n' "$SCRIPT_VERSION" "$(readlink -f -- "${BASH_SOURCE[0]}")" "$LOG_FILE"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -204,7 +211,7 @@ show_menu() {
   echo -e "${BOLD}${BLUE}"
   echo "╔${bar}╗"
   printf "║%-${W}s║\n" "          Fedora - Custom Post-Install Setup"
-  printf "║%-${W}s║\n" "          User: ${USER}"
+  printf "║%-${W}s║\n" "          Revision: $SCRIPT_VERSION | User: ${USER}"
   echo "╠${bar}╣"
   printf "║%-${W}s║\n" "  [1] Run EVERYTHING (recommended)"
   printf "║%-${W}s║\n" "  [2] Update system only"
@@ -231,15 +238,24 @@ nvidia_dnf() {
     --repo=rpmfusion-nonfree --repo=rpmfusion-nonfree-updates "$@"
 }
 
+rpmfusion_config_present() {
+  local kind="$1"
+  [[ -s "/etc/yum.repos.d/rpmfusion-${kind}.repo" &&
+     -s "/etc/yum.repos.d/rpmfusion-${kind}-updates.repo" &&
+     -s "/etc/pki/rpm-gpg/RPM-GPG-KEY-rpmfusion-${kind}-fedora-${FEDORA_VER}" ]]
+}
+
 ensure_rpmfusion() {
-  local kind package installed temp_file identity base fetched
+  local kind package installed temp_file identity base fetched action
   for kind in free nonfree; do
     package="rpmfusion-${kind}-release"
     installed=$(rpm -q --qf '%{VERSION}' "$package" 2>/dev/null) || installed=""
-    if [[ "$installed" == "$FEDORA_VER" && -s "/etc/yum.repos.d/rpmfusion-${kind}.repo" ]]; then
+    if [[ "$installed" == "$FEDORA_VER" ]] && rpmfusion_config_present "$kind"; then
       note "$package for Fedora $FEDORA_VER is already installed."
       continue
     fi
+    action=install
+    [[ "$installed" != "$FEDORA_VER" ]] || action=reinstall
     temp_file=$(mktemp --suffix=.rpm) || return 1
     fetched=0
     for base in https://download1.rpmfusion.org https://mirrors.rpmfusion.org; do
@@ -256,17 +272,17 @@ ensure_rpmfusion() {
     done
     if [[ "$fetched" != 1 ]]; then
       rm -f "$temp_file"
-      warning "RPM Fusion download failed (network/DNS or unavailable release). NVIDIA installation has not started. See $LOG_FILE"
+      warning "RPM Fusion download failed (network/DNS or unavailable release). Repository setup stopped before driver installation. See $LOG_FILE"
       return 1
     fi
-    if ! sudo dnf --repo=fedora --repo=updates install -y "$temp_file"; then
+    if ! sudo dnf --repo=fedora --repo=updates "$action" -y "$temp_file"; then
       rm -f "$temp_file"
       warning "Could not install $package. See $LOG_FILE"
       return 1
     fi
     rm -f "$temp_file"
     installed=$(rpm -q --qf '%{VERSION}' "$package" 2>/dev/null) || installed=""
-    if [[ "$installed" != "$FEDORA_VER" || ! -s "/etc/yum.repos.d/rpmfusion-${kind}.repo" ]]; then
+    if [[ "$installed" != "$FEDORA_VER" ]] || ! rpmfusion_config_present "$kind"; then
       warning "$package installation did not produce the expected repository configuration."
       return 1
     fi
@@ -314,7 +330,7 @@ add_repos() {
 
   step "Google Chrome"
   if [[ ! -f /etc/yum.repos.d/google-chrome.repo ]]; then
-    sudo tee /etc/yum.repos.d/google-chrome.repo > /dev/null <<'EOF'
+    if ! sudo tee /etc/yum.repos.d/google-chrome.repo > /dev/null <<'EOF'
 [google-chrome]
 name=Google Chrome
 baseurl=https://dl.google.com/linux/chrome/rpm/stable/x86_64
@@ -322,6 +338,10 @@ enabled=1
 gpgcheck=1
 gpgkey=https://dl.google.com/linux/linux_signing_key.pub
 EOF
+    then
+      warning "Could not write the Google Chrome repository configuration."
+      return 1
+    fi
   fi
 
   sudo dnf makecache || { warning "Repository metadata refresh failed."; return 1; }
@@ -539,18 +559,34 @@ rpm_app_installed() {
 }
 
 install_rpm_apps() {
-  local package failures=0
+  local package failures=0 batch_failed=0
+  local -a pending=()
   for package in "$@"; do
-    step "$package"
     if rpm_app_installed "$package"; then
       ok "$package already installed."
-    elif sudo dnf install -y "$package" && rpm_app_installed "$package"; then
+    else
+      pending+=("$package")
+    fi
+  done
+  [[ "${#pending[@]}" -gt 0 ]] || return 0
+  step "Installing ${#pending[@]} missing RPM package(s) in one transaction"
+  sudo dnf install -y "${pending[@]}" || batch_failed=1
+  # A failed batch must not block unrelated applications. Also verify that
+  # each requested capability really exists, even if DNF returned success.
+  for package in "${pending[@]}"; do
+    if rpm_app_installed "$package"; then
       ok "$package installation confirmed."
+    elif [[ "${#pending[@]}" -gt 1 ]] &&
+         sudo dnf install -y "$package" && rpm_app_installed "$package"; then
+      ok "$package installation confirmed after individual retry."
     else
       warning "$package NOT installed successfully. See $LOG_FILE"
       failures=$((failures + 1))
     fi
   done
+  if [[ "$batch_failed" -eq 1 && "$failures" -eq 0 ]]; then
+    note "All requested packages are present after recovery from the batch failure."
+  fi
   [[ "$failures" -eq 0 ]]
 }
 
@@ -582,7 +618,7 @@ extension_installed() {
 
 verify_app_inventory() {
   local app missing=0
-  for app in "${RPM_APP_PACKAGES[@]}" chatgpt openlogi nordvpn-gui softmaker-freeoffice-2024; do
+  for app in "${RPM_APP_PACKAGES[@]}" chatgpt openlogi nordvpn nordvpn-gui softmaker-freeoffice-2024; do
     if ! rpm_app_installed "$app"; then
       warning "Missing RPM: $app"
       missing=$((missing + 1))
@@ -605,6 +641,7 @@ verify_app_inventory() {
   else
     warning "$missing expected item(s) missing. Review the names above and $LOG_FILE"
   fi
+  [[ "$missing" -eq 0 ]]
 }
 
 install_chatgpt() {
@@ -718,40 +755,57 @@ install_openlogi() {
 }
 
 install_personal_rpms() {
-  install_chatgpt
-  install_openlogi
+  local failures=0
+  install_chatgpt || failures=$((failures + 1))
+  install_openlogi || failures=$((failures + 1))
+  [[ "$failures" -eq 0 ]]
 }
 
 install_rpms() {
   info "[RPM] Installing RPM packages"
+  local warnings_before=$WARN_COUNT
 
   install_codecs
 
-  # Install each app independently so one unavailable package cannot block others.
+  # Install missing apps together, then recover unresolved packages individually.
 
   install_rpm_apps "${RPM_APP_PACKAGES[@]}"
 
   install_personal_rpms
 
+  install_nordvpn
+  [[ "$WARN_COUNT" -eq "$warnings_before" ]]
+}
+
+install_nordvpn() {
   step "NordVPN"
-  local nord_installer
-  if ! command -v nordvpn &>/dev/null; then
+  local nord_installer warnings_before=$WARN_COUNT
+  if ! rpm_app_installed nordvpn; then
     nord_installer=$(mktemp) || { warning "Cannot prepare NordVPN download."; return 1; }
-    if curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+    if ! curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
         --connect-timeout 15 --max-time 180 \
-        https://downloads.nordcdn.com/apps/linux/install.sh -o "$nord_installer" &&
-        [[ -s "$nord_installer" ]] && sh "$nord_installer" -p nordvpn-gui &&
-        rpm_app_installed nordvpn && rpm_app_installed nordvpn-gui; then
-      ok "NordVPN CLI and GUI installation confirmed."
-      try sudo systemctl enable --now nordvpnd
-      try sudo usermod -aG nordvpn "$USER"
-      note "Log out and back in before using NordVPN. Log in with: nordvpn login"
-    else
-      warning "NordVPN installation could not be confirmed. See $LOG_FILE"
+        https://downloads.nordcdn.com/apps/linux/install.sh -o "$nord_installer" ||
+       [[ ! -s "$nord_installer" ]] || ! sh "$nord_installer" -p nordvpn-gui; then
+      rm -f -- "$nord_installer"
+      warning "NordVPN installer failed. See $LOG_FILE"
+      return 1
     fi
     rm -f -- "$nord_installer"
+  elif ! rpm_app_installed nordvpn-gui; then
+    install_rpm_apps nordvpn-gui || return 1
+  fi
+  if ! rpm_app_installed nordvpn || ! rpm_app_installed nordvpn-gui; then
+    warning "NordVPN CLI and GUI packages could not both be confirmed."
+    return 1
+  fi
+  # Also repair service/group setup when packages were already installed.
+  try sudo systemctl enable --now nordvpnd
+  try sudo usermod -aG nordvpn "$USER"
+  note "Log out and back in after group changes. Log in with: nordvpn login"
+  if [[ "$WARN_COUNT" -eq "$warnings_before" ]]; then
+    ok "NordVPN CLI, GUI and service configuration confirmed."
   else
-    install_rpm_apps nordvpn-gui
+    return 1
   fi
 }
 
@@ -787,49 +841,46 @@ install_freeoffice() {
 install_flatpaks() {
   info "[FLATPAK] Installing apps from Flathub"
   local app failures=0
-
+  local -a pending=()
   if ! command -v flatpak >/dev/null; then
     if ! ensure_sudo || ! sudo dnf install -y flatpak || ! command -v flatpak >/dev/null; then
       warning "Flatpak is unavailable. Cannot install Flatpak applications."
       return 1
     fi
   fi
-
-  if ! flatpak remote-add --system --if-not-exists flathub \
-      https://flathub.org/repo/flathub.flatpakrepo; then
-    warning "Could not configure Flathub. Resolve this error before retrying Flatpak installation."
-    return 1
-  fi
-
-
   for app in "${FLATPAK_IDS[@]}"; do
-    # Strip inline comments
-    app="${app%%#*}"
-    app="${app//[[:space:]]/}"
-    [[ -z "$app" ]] && continue
-    step "$app"
     if flatpak_app_installed "$app"; then
       ok "$app already installed."
-    elif flatpak install --system -y flathub "$app" && flatpak_app_installed "$app"; then
-      ok "$app installation confirmed."
     else
-      warning "$app NOT installed successfully. See $LOG_FILE"
-      failures=$((failures + 1))
+      pending+=("$app")
     fi
   done
-
-  # Connections is installed from the Fedora remote on the reference PC.
-  if ! flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org; then
-    warning "Could not configure the Fedora Flatpak remote for Connections."
-    return 1
+  if [[ "${#pending[@]}" -gt 0 ]]; then
+    if flatpak remote-add --system --if-not-exists flathub \
+        https://flathub.org/repo/flathub.flatpakrepo; then
+      # Preserve per-application recovery and clear failure reporting.
+      for app in "${pending[@]}"; do
+        if flatpak install --system -y flathub "$app" && flatpak_app_installed "$app"; then
+          ok "$app installation confirmed."
+        else
+          warning "$app NOT installed successfully. See $LOG_FILE"
+          failures=$((failures + 1))
+        fi
+      done
+    else
+      warning "Could not configure Flathub. Flathub applications were not installed."
+      failures=$((failures + 1))
+    fi
   fi
+  # An existing app in either scope needs no remote/network modification.
   if flatpak_app_installed org.gnome.Connections; then
     ok "Connections already installed."
-  elif flatpak install --system -y fedora org.gnome.Connections &&
+  elif flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org &&
+       flatpak install --system -y fedora org.gnome.Connections &&
        flatpak_app_installed org.gnome.Connections; then
     ok "Connections installation confirmed."
   else
-    warning "Connections NOT installed successfully. See $LOG_FILE"
+    warning "Connections NOT installed successfully. Check its Fedora remote. See $LOG_FILE"
     failures=$((failures + 1))
   fi
   [[ "$failures" -eq 0 ]]
@@ -1008,12 +1059,13 @@ install_nvidia() {
 # ─────────────────────────────────────────────
 install_gnome_extensions() {
   info "[EXTENSIONS] Installing GNOME extensions"
+  local ext warnings_before=$WARN_COUNT
 
   if ! has_gui_session; then
     warning "No graphical session detected (no D-Bus session bus)."
     warning "GNOME extensions need a running GNOME session to install and enable."
     warning "Run option [7] from inside your GNOME session (not over SSH/TTY). Skipping."
-    return
+    return 1
   fi
 
   export PATH="$HOME/.local/bin:$PATH"
@@ -1055,6 +1107,7 @@ install_gnome_extensions() {
     echo "  Required extensions:"
     printf '    - %s\n' "${EXTENSIONS[@]}"
   fi
+  [[ "$WARN_COUNT" -eq "$warnings_before" ]]
 }
 
 # ─────────────────────────────────────────────
@@ -1073,7 +1126,8 @@ remove_bloat() {
   if rpm -qa | sort > "$BACKUP_FILE" 2>/dev/null; then
     ok "Package inventory saved for recovery review: $BACKUP_FILE"
   else
-    warning "Failed to write backup."
+    warning "Failed to write the package inventory; cleanup was not started."
+    return 1
   fi
 
   step "Removing LibreOffice (replaced by FreeOffice)"
@@ -1119,10 +1173,15 @@ remove_bloat() {
     yelp \
     dconf-editor \
     htop \
-    piper \
     'jack-audio-connection-kit*' \
     qjackctl
 
+
+  if rpm_app_installed openlogi; then
+    try sudo dnf remove -y piper
+  else
+    warning "Keeping Piper: OpenLogi is not installed."
+  fi
 
   step "Removing unnecessary Flatpaks"
   local obsolete_app
@@ -1130,14 +1189,15 @@ remove_bloat() {
     org.gnome.Showtime org.gnome.Decibels org.gnome.Totem org.gnome.Music \
     org.freedesktop.Piper org.gnome.Help com.usebruno.Bruno; do
     case "$obsolete_app" in
+      org.freedesktop.Piper)
+        rpm_app_installed openlogi || continue ;;
       org.gnome.Showtime|org.gnome.Decibels|org.gnome.Totem|org.gnome.Music)
         rpm_app_installed vlc || continue ;;
     esac
     remove_flatpak_app "$obsolete_app"
   done
 
-  step "Cleaning orphan dependencies"
-  try sudo dnf autoremove -y
+  # Keep unrelated orphan packages; this cleanup targets the explicit app list.
 
   if [[ "${WARN_COUNT:-0}" -gt "$warnings_before" ]]; then
     note "Cleanup finished with warnings. Review failed removals and retained applications above."
@@ -1408,11 +1468,11 @@ run_all() {
 
   add_repos || return 1
   update_system || return 1
-  install_rpms        # Installs everything (including codecs)
-  install_freeoffice  # FreeOffice before removing LibreOffice
-  install_flatpaks
-  install_nvidia auto
-  install_gnome_extensions
+  try install_rpms    # Installs everything (including codecs)
+  try install_freeoffice # FreeOffice before removing LibreOffice
+  try install_flatpaks
+  try install_nvidia auto
+  try install_gnome_extensions
   remove_bloat        # Removes LibreOffice and bloat AFTER installing everything
   apply_settings      # Visual settings + default apps
   apply_dnf_safety_setting  # best=False — only AFTER everything is installed
@@ -1429,6 +1489,7 @@ run_all() {
   fi
   echo "  Full log saved to: $LOG_FILE"
   echo -e "${YELLOW}⚠ Reboot the system to activate all drivers and settings.${NC}"
+  [[ "$WARN_COUNT" -eq 0 ]]
 }
 
 # ─────────────────────────────────────────────
@@ -1439,9 +1500,18 @@ while true; do
 
   case "$CHOICE" in
     1) run_all ;;
-    2) ensure_sudo && { add_repos && update_system; } ;;
+    2) ensure_sudo && { protect_cuda_driver_packages && update_system; } ;;
     3) ensure_sudo && remove_bloat ;;
-    4) ensure_sudo && { if add_repos; then install_rpms; install_freeoffice; fi; } ;;
+    4) ensure_sudo && {
+      if add_repos; then
+        rpm_status=0
+        install_rpms || rpm_status=1
+        install_freeoffice || rpm_status=1
+        [[ "$rpm_status" -eq 0 ]]
+      else
+        false
+      fi
+    } ;;
     5) install_flatpaks ;;
     6) ensure_sudo && install_nvidia manual ;;
     7) install_gnome_extensions ;;
@@ -1451,6 +1521,10 @@ while true; do
     *) warning "Invalid option." ;;
   esac
 
+  action_status=$?
+  if [[ "$action_status" -ne 0 ]]; then
+    warning "Option $CHOICE finished with errors (status $action_status). Review: $LOG_FILE"
+  fi
   echo
   read -rp "Press ENTER to return to the menu..." _ || break
 done
