@@ -44,8 +44,11 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 ```bash
 git clone https://github.com/felipy2k/Fedora-Y2K.git
 cd Fedora-Y2K
+bash Fedora-Y2K.sh --version
 bash Fedora-Y2K.sh
 ```
+
+> 🔎 This revision identifies itself as **2026.10.19-r3** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.19-r3.sh`.
 
 > ⚠️ **Do not run as root.** The script uses `sudo` internally where needed.
 > 🖥️ **Run it from inside your GNOME session** (a terminal in the desktop), not over SSH or a bare TTY — the visual steps need a graphical session.
@@ -82,7 +85,6 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ## ✨ What gets installed
 
 ### 📦 Repositories
-
 | | |
 |---|---|
 | 🔴 | RPM Fusion Free + Nonfree + Tainted |
@@ -95,7 +97,6 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ---
 
 ### 🎬 Multimedia Codecs
-
 - 🔄 Swaps `ffmpeg-free` → full `ffmpeg` (H.264, H.265, AAC, MP3…) — **idempotent**
 - 🎛️ Full GStreamer stack — **explicit RPM package list**
 - ⚡ Hardware acceleration auto-detected by GPU:
@@ -106,14 +107,14 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 ---
 
 ### 🖥️ NVIDIA Driver + CUDA
-
-- 🔍 GPU detection via PCI display-device class codes
+- 🔍 GPU detection via PCI display-device class codes, with sysfs fallback
 - 🔐 Secure Boot and enrolled akmods signing-key checks
+- 🌐 Reuses complete RPM Fusion release configurations and reinstalls missing configuration files. Downloads use an official fallback source and validate package identity. Option **[6]** uses Fedora and RPM Fusion repositories independently of application repositories.
 - 📦 RPM Fusion: `akmod-nvidia`, `xorg-x11-drv-nvidia-cuda`, `nvidia-settings`, `nvidia-vaapi-driver`
 - 🔨 Builds and checks the module for the newest installed kernel, then regenerates its initramfs
 - ⚡ Enables power services: `nvidia-hibernate`, `nvidia-resume`, `nvidia-suspend`
 - 🧪 Optional: full CUDA Toolkit (`nvcc`, cuBLAS, headers) via official NVIDIA repo
-- 🟢 **GPU detected** → asks for confirmation (`yes`) before installation
+- 🟢 **GPU detected** → asks for confirmation (`yes` or `sim`) before installation
 - 🟡 **GPU not detected** → complete setup skips NVIDIA; option **[6]** allows explicit confirmation for supported hardware
 
 ---
@@ -187,7 +188,8 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🎵 Audio | Decibels, GNOME Music, Rhythmbox |
 | 💻 Terminal | GNOME Terminal → keeps **Ptyxis** (default since Fedora 41) |
 | 🧩 Extensions | gnome-extensions-app → replaced by Extension Manager Flatpak |
-| 🗑️ Other | GNOME Tour, Weather, Maps, Yelp, dconf-editor, htop, Piper, JACK, QjackCtl, Bruno Flatpak |
+| 🖱️ Mouse tools | Piper RPM/Flatpak → replaced after OpenLogi installation is confirmed |
+| 🗑️ Other | GNOME Tour, Weather, Maps, Yelp, dconf-editor, htop, JACK, QjackCtl, Bruno Flatpak |
 
 ---
 
@@ -297,12 +299,12 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 - 📋 **Logging** — timestamped log saved to `~/fedora-y2k-YYYYMMDD-HHMMSS.log`
 - 🔑 **Sudo keepalive** — authenticates once, then refreshes the `sudo` timestamp in the background so long installs never pause for a password mid-run
 - 🖥️ **Session-aware** — visual steps skip cleanly when no graphical session is present (SSH/TTY)
-- 🔒 **Individual installs** — repository RPM applications are installed and checked separately; one failing package does not block the others
-- 💾 **Package backup** — full RPM list saved before bloat removal
+- 📦 **RPM transactions** — missing applications are installed together, checked individually, and retried individually when necessary; installed applications are skipped
+- 💾 **Package backup** — cleanup requires a successful RPM inventory backup; replacement applications are checked before removing their alternatives
 - 💿 **Disk space check** — warns if less than 15 GB free
 - 🐧 **Kernel limit** — sets `installonly_limit=3` to retain fallback kernel versions
 - 📊 **Automatic final verification** — runs at the end of the complete setup, before the summary; checks every expected RPM, Flatpak and extension; reports missing items by name, warning count and log path
-- 🔄 **Repeat runs** — installed catalog RPM apps and Flatpaks are detected and skipped
+- 🔄 **Repeat runs** — installed catalog RPM apps and Flatpaks are detected and skipped; Flatpak remotes are configured only for missing apps
 - 🚫 **Failure reporting** — a failed system upgrade stops the complete setup; individual application failures are reported while the remaining applications continue
 </details>
 
