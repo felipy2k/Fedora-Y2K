@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-SCRIPT_VERSION="2026.10.19-r3"
+SCRIPT_VERSION="2026.10.19-r4"
 if [[ "${1:-}" == --version ]]; then
   printf 'Fedora Y2K %s\n' "$SCRIPT_VERSION"
   exit 0
@@ -12,6 +12,8 @@ fi
 LOG_FILE="$HOME/fedora-y2k-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 printf 'Fedora Y2K %s | Script: %s\nLog: %s\n' "$SCRIPT_VERSION" "$(readlink -f -- "${BASH_SOURCE[0]}")" "$LOG_FILE"
+printf 'Script SHA-256: '
+sha256sum -- "${BASH_SOURCE[0]}"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -381,6 +383,7 @@ apply_dnf_safety_setting() {
 # ─────────────────────────────────────────────
 install_codecs() {
   info "[CODECS] Installing multimedia codecs (official method)"
+  local warnings_before=$WARN_COUNT
 
   step "Swapping ffmpeg-free for full ffmpeg (with proprietary codecs)"
   if rpm -q ffmpeg-free &>/dev/null; then
@@ -427,6 +430,7 @@ install_codecs() {
     step "Intel GPU detected — installing intel-media-driver"
     try sudo dnf install -y --skip-unavailable intel-media-driver libva-intel-driver
   fi
+  [[ "$WARN_COUNT" -eq "$warnings_before" ]]
 }
 
 # ─────────────────────────────────────────────
@@ -765,15 +769,15 @@ install_rpms() {
   info "[RPM] Installing RPM packages"
   local warnings_before=$WARN_COUNT
 
-  install_codecs
+  try install_codecs
 
   # Install missing apps together, then recover unresolved packages individually.
 
-  install_rpm_apps "${RPM_APP_PACKAGES[@]}"
+  try install_rpm_apps "${RPM_APP_PACKAGES[@]}"
 
-  install_personal_rpms
+  try install_personal_rpms
 
-  install_nordvpn
+  try install_nordvpn
   [[ "$WARN_COUNT" -eq "$warnings_before" ]]
 }
 
@@ -1382,22 +1386,28 @@ apply_settings() {
 # ─────────────────────────────────────────────
 verify_final() {
   info "[VERIFICATION] Checking final system state"
+  local warnings_before=$WARN_COUNT installed_names
+  local REMOVED_CHECK BROWSER VIDEO_DEFAULT AUDIO_DEFAULT BUTTONS
 
   echo
   echo -e "${BOLD}── Packages that should have been REMOVED ──${NC}"
-  REMOVED_CHECK=$(rpm -qa --qf '%{NAME}\n' | grep -E \
-    "libreoffice|^showtime|^decibels|^totem|totem-video-thumbnailer|gnome-music|^rhythmbox|gnome-tour|gnome-weather|gnome-maps|^yelp|^dconf-editor|^htop|^piper|^gnome-terminal$|gnome-extensions-app" \
-    2>/dev/null || true)
-  if [[ -z "$REMOVED_CHECK" ]]; then
-    ok "No unwanted packages found."
+  if installed_names=$(rpm -qa --qf '%{NAME}\n'); then
+    REMOVED_CHECK=$(grep -E \
+      '^(libreoffice.*|showtime|decibels|totem.*|gnome-music|rhythmbox|gnome-tour|gnome-weather|gnome-maps|yelp|dconf-editor|htop|piper|gnome-terminal|gnome-extensions-app)$' \
+      <<< "$installed_names" || true)
+    if [[ -z "$REMOVED_CHECK" ]]; then
+      ok "No unwanted packages found."
+    else
+      warning "Still present (some may have been retained because their replacements failed):"
+      printf '%s\n' "$REMOVED_CHECK"
+    fi
   else
-    warning "Still present:"
-    echo "$REMOVED_CHECK"
+    warning "Cannot query installed RPMs; cleanup status is unknown."
   fi
 
   echo
   echo -e "${BOLD}── Expected app inventory ──${NC}"
-  verify_app_inventory
+  try verify_app_inventory
 
   echo
   echo -e "${BOLD}── Essential codecs ──${NC}"
@@ -1424,15 +1434,18 @@ verify_final() {
 
   echo
   echo -e "${BOLD}── NVIDIA GPU ──${NC}"
-  verify_nvidia
+  try verify_nvidia
 
   echo
   echo -e "${BOLD}── GNOME Extensions ──${NC}"
   if command -v gnome-extensions &>/dev/null; then
-    gnome-extensions list --enabled 2>/dev/null || true
+    if ! gnome-extensions list --enabled; then
+      warning "Could not query enabled GNOME extensions."
+    fi
   else
     warning "gnome-extensions not available."
   fi
+  [[ "$WARN_COUNT" -eq "$warnings_before" ]]
 }
 
 # ─────────────────────────────────────────────
@@ -1440,6 +1453,7 @@ verify_final() {
 # Correct order: install everything → remove bloat
 # ─────────────────────────────────────────────
 run_all() {
+  local AVAIL_GB DISK_CONFIRM="" CONFIRM=""
   echo
   echo -e "${YELLOW}This will run all steps in the correct order.${NC}"
   echo -e "${CYAN}Order: repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions → Remove bloat → Settings${NC}"
@@ -1451,17 +1465,17 @@ run_all() {
     echo -e "${BOLD}Free space on /: ${AVAIL_GB} GB${NC}"
     if [[ "$AVAIL_GB" -lt 15 ]]; then
       warning "Less than 15 GB free — full install may run out of space (Steam + Blender + CUDA can easily exceed this)."
-      read -rp "Continue anyway? [y/N]: " DISK_CONFIRM
+      read -rp "Continue anyway? [y/N]: " DISK_CONFIRM || return 0
       [[ "${DISK_CONFIRM,,}" != "y" ]] && { warning "Cancelled."; return; }
     fi
   fi
 
-  read -rp "Confirm? [y/N]: " CONFIRM
+  read -rp "Confirm? [y/N]: " CONFIRM || return 0
   [[ "${CONFIRM,,}" != "y" ]] && { warning "Cancelled."; return; }
 
   # Authenticate sudo up front (and keep it alive) so the long install
   # never pauses for a password halfway through.
-  ensure_sudo || { warning "Cannot proceed without sudo authentication."; return; }
+  ensure_sudo || { warning "Cannot proceed without sudo authentication."; return 1; }
 
   # Reset warning counter for clean final summary
   WARN_COUNT=0
