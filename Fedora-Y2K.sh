@@ -86,11 +86,33 @@ FEDORA_VER="$(rpm -E %fedora)"
 
 
 # Numeric PCI IDs avoid language-dependent vendor names and false matches.
+gpu_devices_from_sysfs() {
+  local path class vendor device seen=0
+  local -a records=()
+  for path in /sys/bus/pci/devices/*; do
+    [[ -d "$path" ]] || continue
+    read -r class < "$path/class" || return 1
+    seen=1
+    [[ "${class,,}" == 0x03* ]] || continue
+    read -r vendor < "$path/vendor" || return 1
+    read -r device < "$path/device" || return 1
+    records+=("${path##*/} ${class:2:4}: ${vendor:2}:${device:2}")
+  done
+  [[ "$seen" -eq 1 ]] || return 1
+  if [[ ${#records[@]} -gt 0 ]]; then
+    printf '%s\n' "${records[@],,}"
+  fi
+  return 0
+}
+
 gpu_devices() {
   local devices
-  command -v lspci >/dev/null || return 1
-  devices=$(lspci -Dn) || return 1
-  awk '$2 ~ /^(0300|0302|0380):$/ {print}' <<< "$devices"
+  if command -v lspci >/dev/null && devices=$(LC_ALL=C lspci -Dn); then
+    awk '$2 ~ /^03[[:xdigit:]][[:xdigit:]]:$/ {print tolower($0)}' <<< "$devices"
+    return 0
+  fi
+  # PCI sysfs does not require pciutils or an installed NVIDIA driver.
+  gpu_devices_from_sysfs
 }
 
 gpu_vendor_present() {
@@ -202,6 +224,69 @@ show_menu() {
 # ─────────────────────────────────────────────
 # REPOS
 # ─────────────────────────────────────────────
+# NVIDIA-only actions must not depend on Chrome, NordVPN or other app repos.
+nvidia_dnf() {
+  sudo dnf --repo=fedora --repo=updates \
+    --repo=rpmfusion-free --repo=rpmfusion-free-updates \
+    --repo=rpmfusion-nonfree --repo=rpmfusion-nonfree-updates "$@"
+}
+
+ensure_rpmfusion() {
+  local kind package installed temp_file identity base fetched
+  for kind in free nonfree; do
+    package="rpmfusion-${kind}-release"
+    installed=$(rpm -q --qf '%{VERSION}' "$package" 2>/dev/null) || installed=""
+    if [[ "$installed" == "$FEDORA_VER" && -s "/etc/yum.repos.d/rpmfusion-${kind}.repo" ]]; then
+      note "$package for Fedora $FEDORA_VER is already installed."
+      continue
+    fi
+    temp_file=$(mktemp --suffix=.rpm) || return 1
+    fetched=0
+    for base in https://download1.rpmfusion.org https://mirrors.rpmfusion.org; do
+      if curl --fail --location --proto '=https' --proto-redir '=https' \
+          --connect-timeout 15 --max-time 90 --retry 1 \
+          --output "$temp_file" "$base/$kind/fedora/$package-${FEDORA_VER}.noarch.rpm"; then
+        identity=$(rpm -qp --qf '%{NAME} %{VERSION} %{ARCH}' "$temp_file" 2>/dev/null) || identity=""
+        if [[ "$identity" == "$package $FEDORA_VER noarch" ]]; then
+          fetched=1
+          break
+        fi
+      fi
+      warning "Could not obtain a valid $package from $base; trying the next source."
+    done
+    if [[ "$fetched" != 1 ]]; then
+      rm -f "$temp_file"
+      warning "RPM Fusion download failed (network/DNS or unavailable release). NVIDIA installation has not started. See $LOG_FILE"
+      return 1
+    fi
+    if ! sudo dnf --repo=fedora --repo=updates install -y "$temp_file"; then
+      rm -f "$temp_file"
+      warning "Could not install $package. See $LOG_FILE"
+      return 1
+    fi
+    rm -f "$temp_file"
+    installed=$(rpm -q --qf '%{VERSION}' "$package" 2>/dev/null) || installed=""
+    if [[ "$installed" != "$FEDORA_VER" || ! -s "/etc/yum.repos.d/rpmfusion-${kind}.repo" ]]; then
+      warning "$package installation did not produce the expected repository configuration."
+      return 1
+    fi
+  done
+}
+
+prepare_nvidia_repos() {
+  if [[ ! "$FEDORA_VER" =~ ^[0-9]+$ || -e /run/ostree-booted || "$(uname -m)" != x86_64 ]]; then
+    warning "NVIDIA setup requires traditional Fedora x86_64 with DNF."
+    return 1
+  fi
+  step "Preparing Fedora and RPM Fusion repositories for NVIDIA"
+  protect_cuda_driver_packages || return 1
+  if ! sudo dnf --repo=fedora --repo=updates install -y pciutils curl mokutil; then
+    warning "NVIDIA repository setup failed. See the DNF error above and $LOG_FILE"
+    return 1
+  fi
+  ensure_rpmfusion
+}
+
 add_repos() {
   info "[REPOS] Adding repositories"
   if [[ ! "$FEDORA_VER" =~ ^[0-9]+$ || -e /run/ostree-booted ]]; then
@@ -213,18 +298,13 @@ add_repos() {
     return 1
   fi
   protect_cuda_driver_packages || return 1
-  if ! sudo dnf install -y dnf5-plugins pciutils curl; then
+  if ! sudo dnf --repo=fedora --repo=updates install -y dnf5-plugins pciutils curl; then
     warning "Could not install required repository/hardware tools."
     return 1
   fi
 
   step "RPM Fusion (free + nonfree)"
-  if ! sudo dnf install -y \
-    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
-    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm"; then
-    warning "RPM Fusion setup failed; installation stopped."
-    return 1
-  fi
+  ensure_rpmfusion || return 1
 
   step "Enabling RPM Fusion tainted repositories"
   try sudo dnf install -y rpmfusion-free-release-tainted rpmfusion-nonfree-release-tainted
@@ -764,7 +844,7 @@ _nvidia_do_install() {
   # Unknown Secure Boot state must not be mistaken for disabled.
   if [[ -d /sys/firmware/efi ]]; then
     if ! command -v mokutil >/dev/null; then
-      sudo dnf install -y mokutil || { warning "Cannot check Secure Boot."; return 1; }
+      nvidia_dnf install -y mokutil || { warning "Cannot check Secure Boot."; return 1; }
     fi
     sb_state=$(LC_ALL=C mokutil --sb-state 2>&1) || { warning "Cannot determine Secure Boot state: $sb_state"; return 1; }
     if [[ "$sb_state" == *enabled* ]]; then
@@ -791,7 +871,7 @@ _nvidia_do_install() {
     return 1
   fi
   step "Installing NVIDIA driver from RPM Fusion for kernel $target_kernel"
-  if ! sudo dnf install -y \
+  if ! nvidia_dnf install -y \
       "kernel-devel-$target_kernel" akmod-nvidia xorg-x11-drv-nvidia \
       xorg-x11-drv-nvidia-cuda xorg-x11-drv-nvidia-cuda-libs \
       xorg-x11-drv-nvidia-power nvidia-settings; then
@@ -819,7 +899,7 @@ _nvidia_do_install() {
     return 1
   fi
   try sudo systemctl enable nvidia-hibernate nvidia-resume nvidia-suspend
-  install_rpm_apps nvidia-vaapi-driver libva-utils vdpauinfo
+  try nvidia_dnf install -y nvidia-vaapi-driver libva-utils vdpauinfo
   ok "NVIDIA packages and module installed for $target_kernel; runtime validation follows after reboot."
   note "The GPU model must be supported by this driver branch; older cards may require a legacy branch."
 
@@ -865,7 +945,7 @@ _nvidia_do_install() {
     return 1
   fi
   rm -f -- "$repo_file"
-  if ! sudo dnf install -y --refresh cuda-toolkit || ! rpm -q cuda-toolkit &>/dev/null; then
+  if ! nvidia_dnf --repo="$repo_id" install -y --refresh cuda-toolkit || ! rpm -q cuda-toolkit &>/dev/null; then
     warning "CUDA Toolkit installation failed. NVIDIA driver status is separate."
     return 1
   fi
@@ -890,23 +970,37 @@ _nvidia_do_install() {
 # ─────────────────────────────────────────────
 install_nvidia() {
   info "[NVIDIA] Detecting GPU"
-  local GPU_DEVICES GPU_CONFIRM mode="${1:-manual}"
+  local GPU_DEVICES GPU_CONFIRM mode="${1:-manual}" detection_ok=1
   if ! GPU_DEVICES=$(gpu_devices); then
-    warning "GPU detection failed. Check pciutils; NVIDIA installation skipped."
-    return 1
+    detection_ok=0
+    warning "GPU query failed; this does not mean that no NVIDIA card is present."
+    if [[ "$mode" == auto ]]; then
+      note "Use option [6] to explicitly request installation after checking the hardware."
+      return 1
+    fi
   fi
-  if gpu_vendor_present 10de; then
+  if [[ "$detection_ok" -eq 1 ]] && gpu_vendor_present 10de; then
     note "NVIDIA display device(s):"
     awk '$3 ~ /^10de:/ {print}' <<< "$GPU_DEVICES"
   elif [[ "$mode" == auto ]]; then
     note "No NVIDIA GPU detected; skipping NVIDIA and CUDA."
     return 0
   else
-    warning "No NVIDIA GPU detected. Only force installation for hardware you know is supported."
+    warning "NVIDIA was not detected. Manual installation is available for hardware you know is supported."
+    [[ -z "$GPU_DEVICES" ]] || printf 'Detected PCI display devices:\n%s\n' "$GPU_DEVICES"
   fi
-  read -rp "  Install NVIDIA driver? Type yes to confirm: " GPU_CONFIRM || return 0
-  [[ "${GPU_CONFIRM,,}" == yes ]] || { note "NVIDIA installation skipped."; return 0; }
-  _nvidia_do_install
+  read -rp "  Install NVIDIA driver? [yes/sim/N]: " GPU_CONFIRM || return 0
+  case "${GPU_CONFIRM,,}" in
+    yes|y|sim|s) ;;
+    *) note "NVIDIA installation skipped."; return 0 ;;
+  esac
+  if [[ "$mode" == manual ]]; then
+    prepare_nvidia_repos || return 1
+  fi
+  if ! _nvidia_do_install; then
+    warning "NVIDIA/CUDA stage stopped before completion. Review the exact error above. Log: $LOG_FILE"
+    return 1
+  fi
 }
 
 # ─────────────────────────────────────────────
@@ -1349,7 +1443,7 @@ while true; do
     3) ensure_sudo && remove_bloat ;;
     4) ensure_sudo && { if add_repos; then install_rpms; install_freeoffice; fi; } ;;
     5) install_flatpaks ;;
-    6) ensure_sudo && { add_repos && install_nvidia; } ;;
+    6) ensure_sudo && install_nvidia manual ;;
     7) install_gnome_extensions ;;
     8) apply_settings ;;
     0) echo "Exiting."; exit 0 ;;
