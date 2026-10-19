@@ -29,8 +29,8 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 | 🗂️ Component | 📝 Storage notes |
 |---|---|
 | 📦 RPM apps, codecs and themes | Allow space for packages and dependencies |
-| 🤖 ChatGPT | Approximately 1.7 GB installed on the reference PC |
-| 🖱️ OpenLogi | Approximately 84 MB installed on the reference PC |
+| 🤖 ChatGPT | Allow space for the download, installation, and required dependencies |
+| 🖱️ OpenLogi | Allow space for the download, installation, and required dependencies |
 | 📱 Flatpaks | 27 apps plus shared GNOME/KDE runtimes |
 | 🎮 Steam | Runtime and games require additional space |
 | 🟢 NVIDIA + CUDA | Driver packages and optional CUDA Toolkit require additional space |
@@ -44,8 +44,11 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 ```bash
 git clone https://github.com/felipy2k/Fedora-Y2K.git
 cd Fedora-Y2K
-bash Fedora-Y2K.sh --version
-bash Fedora-Y2K.sh
+if grep -qx 'SCRIPT_VERSION="2026.10.19-r3"' Fedora-Y2K.sh; then
+  bash Fedora-Y2K.sh
+else
+  printf '%s\n' 'This copy is not revision 2026.10.19-r3. Obtain the matching script before running it.'
+fi
 ```
 
 > 🔎 This revision identifies itself as **2026.10.19-r3** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.19-r3.sh`.
