@@ -47,7 +47,7 @@ cd fedora-Y2K &&
 bash Fedora-Y2K.sh
 ```
 
-> 🔎 This revision identifies itself as **2026.10.19-r8** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.19-r8.sh`.
+> 🔎 This revision identifies itself as **2026.10.20-r10** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.20-r10.sh`.
 
 > ⚠️ **Do not run as root.** The script uses `sudo` internally where needed.
 > 🖥️ **Run it from inside your GNOME session** (a terminal in the desktop), not over SSH or a bare TTY — the visual steps need a graphical session.
@@ -127,6 +127,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🎬 Multimedia | VLC, Audacity, Darktable, HandBrake, EasyEffects, OBS Studio, DistroAV, Cheese, Jellyfin server, Calf, Rygel |
 | 🎨 Graphics / 3D | Inkscape, Blender |
 | 🎮 Gaming | Steam |
+| 🍷 Windows applications | Bottles (`bottles`, Fedora RPM) |
 | 🖥️ GNOME Apps | Files (Nautilus), Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Characters, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, ABRT, **Drawing**, Papers, Papers Nautilus integration, Dialect, Sushi, System Monitor, Settings, Ptyxis, Parental Controls |
 | 🔧 Utilities | Timeshift, OpenLogi, fastfetch, pipx, DreamChess, lm_sensors, Deskflow, Fedora Media Writer, qBittorrent, Remmina (RDP/VNC) |
 | 🛡️ VPN | **NordVPN** CLI + GUI (official installer, daemon enabled, user added to group) |
