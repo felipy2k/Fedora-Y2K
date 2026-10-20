@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-SCRIPT_VERSION="2026.10.19-r4"
+SCRIPT_VERSION="2026.10.19-r8"
 if [[ "${1:-}" == --version ]]; then
   printf 'Fedora Y2K %s\n' "$SCRIPT_VERSION"
   exit 0
@@ -10,7 +10,8 @@ fi
 
 # Setup logging — captures all output to a timestamped log file in $HOME
 LOG_FILE="$HOME/fedora-y2k-$(date +%Y%m%d-%H%M%S).log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Keep the logger alive until the parent closes the pipe after cancellation.
+exec > >(trap '' INT TERM; exec tee -i -a "$LOG_FILE") 2>&1
 printf 'Fedora Y2K %s | Script: %s\nLog: %s\n' "$SCRIPT_VERSION" "$(readlink -f -- "${BASH_SOURCE[0]}")" "$LOG_FILE"
 printf 'Script SHA-256: '
 sha256sum -- "${BASH_SOURCE[0]}"
@@ -34,7 +35,7 @@ ok()      { echo -e "  ${GREEN}✓ $*${NC}"; }
 WARN_COUNT=0
 
 # Robust try() — runs a command, logs a warning if it fails, and always
-# returns 0 so a failure inside try() never aborts the script.
+# returns 0 for ordinary failures. Cancellation (130/143) stops the script.
 # NOTE: the script intentionally does NOT use `set -e`. The previous local
 # `set +e / set -e` toggle was removed because it left `-e` ENABLED after
 # every try() call, which could silently abort the script on the next
@@ -42,6 +43,10 @@ WARN_COUNT=0
 try() {
   "$@"
   local rc=$?
+  case "$rc" in
+    130) handle_signal INT 130 ;;
+    143) handle_signal TERM 143 ;;
+  esac
   if [[ $rc -ne 0 ]]; then
     warning "Failed (exit $rc), continuing: $*"
   fi
@@ -71,7 +76,16 @@ cleanup() {
   [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
   return 0
 }
+handle_signal() {
+  local signal="$1" status="$2"
+  # A second Ctrl+C must not interrupt cancellation reporting or EXIT cleanup.
+  trap '' INT TERM
+  printf '\nInstallation cancelled (%s). No further stages will run. Log: %s\n' "$signal" "$LOG_FILE" >&2
+  exit "$status"
+}
 trap cleanup EXIT
+trap 'handle_signal INT 130' INT
+trap 'handle_signal TERM 143' TERM
 
 # ─────────────────────────────────────────────
 # GRAPHICAL SESSION DETECTION
@@ -324,6 +338,16 @@ add_repos() {
   step "RPM Fusion (free + nonfree)"
   ensure_rpmfusion || return 1
 
+  # Existing release packages can have disabled base/update repositories.
+  # General app installation needs these enabled, even when no RPM download
+  # was needed during bootstrap.
+  if ! sudo dnf config-manager setopt \
+      rpmfusion-free.enabled=1 rpmfusion-free-updates.enabled=1 \
+      rpmfusion-nonfree.enabled=1 rpmfusion-nonfree-updates.enabled=1; then
+    warning "Could not enable the required RPM Fusion repositories."
+    return 1
+  fi
+
   step "Enabling RPM Fusion tainted repositories"
   try sudo dnf install -y rpmfusion-free-release-tainted rpmfusion-nonfree-release-tainted
 
@@ -389,14 +413,14 @@ install_codecs() {
   if rpm -q ffmpeg-free &>/dev/null; then
     try sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing
   else
-    install_rpm_apps ffmpeg
+    try install_rpm_apps ffmpeg
   fi
 
   # Use explicit codec packages instead of depending on a release-specific group.
   step "Installing GStreamer codec stack (DNF5-compatible individual packages)"
-  try sudo dnf install -y \
+  try install_rpm_apps \
     --setopt="install_weak_deps=False" \
-    --exclude=PackageKit-gstreamer-plugin \
+    --exclude=PackageKit-gstreamer-plugin -- \
     gstreamer1-plugins-base \
     gstreamer1-plugins-good \
     gstreamer1-plugins-bad-free \
@@ -564,7 +588,13 @@ rpm_app_installed() {
 
 install_rpm_apps() {
   local package failures=0 batch_failed=0
-  local -a pending=()
+  local -a pending=() install_options=()
+  # Optional DNF arguments precede --; use the same options for recovery.
+  while [[ "$#" -gt 0 && "$1" == --* ]]; do
+    if [[ "$1" == -- ]]; then shift; break; fi
+    install_options+=("$1")
+    shift
+  done
   for package in "$@"; do
     if rpm_app_installed "$package"; then
       ok "$package already installed."
@@ -574,14 +604,14 @@ install_rpm_apps() {
   done
   [[ "${#pending[@]}" -gt 0 ]] || return 0
   step "Installing ${#pending[@]} missing RPM package(s) in one transaction"
-  sudo dnf install -y "${pending[@]}" || batch_failed=1
+  sudo dnf install -y "${install_options[@]}" "${pending[@]}" || batch_failed=1
   # A failed batch must not block unrelated applications. Also verify that
   # each requested capability really exists, even if DNF returned success.
   for package in "${pending[@]}"; do
     if rpm_app_installed "$package"; then
       ok "$package installation confirmed."
     elif [[ "${#pending[@]}" -gt 1 ]] &&
-         sudo dnf install -y "$package" && rpm_app_installed "$package"; then
+         sudo dnf install -y "${install_options[@]}" "$package" && rpm_app_installed "$package"; then
       ok "$package installation confirmed after individual retry."
     else
       warning "$package NOT installed successfully. See $LOG_FILE"
@@ -819,24 +849,80 @@ install_nordvpn() {
 # ─────────────────────────────────────────────
 install_freeoffice() {
   info "[FREEOFFICE] Installing FreeOffice 2024"
-  local installer
   if rpm_app_installed softmaker-freeoffice-2024; then
     ok "FreeOffice already installed."
     return 0
   fi
-  installer=$(mktemp) || { warning "Cannot prepare FreeOffice download."; return 1; }
-  if curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
-      --connect-timeout 15 --max-time 180 \
-      https://softmaker.net/down/install-softmaker-freeoffice-2024.sh -o "$installer" &&
-      [[ -s "$installer" ]] && sudo bash "$installer" &&
-      rpm_app_installed softmaker-freeoffice-2024; then
-    rm -f -- "$installer"
-    ok "FreeOffice installation confirmed."
-  else
-    rm -f -- "$installer"
-    warning "FreeOffice installation failed or its package is missing. LibreOffice will be kept."
+  if [[ "$(uname -m)" != x86_64 ]]; then
+    warning "FreeOffice requires x86_64. LibreOffice will be kept."
     return 1
   fi
+
+  # Official published build; the repository supplies subsequent updates.
+  local build=1238 work rpm_file url identity rc downloaded=0
+  work=$(mktemp -d) || { warning "Cannot prepare FreeOffice download."; return 1; }
+  rpm_file="$work/softmaker-freeoffice-2024-${build}.x86_64.rpm"
+  for url in \
+      "https://www.softmaker.net/down/softmaker-freeoffice-2024-${build}.x86_64.rpm" \
+      "https://shop.softmaker.com/repo/rpm/x86_64/RPMS/softmaker-freeoffice-2024-${build}.x86_64.rpm"; do
+    note "Downloading FreeOffice: $url"
+    # Resume a partial transfer at the second official origin. Bound stalls,
+    # not the entire package-manager transaction (which must not be killed).
+    if curl --proto '=https' --proto-redir '=https' -fL \
+        --connect-timeout 15 --max-time 1800 --speed-limit 1024 --speed-time 60 \
+        --continue-at - -o "$rpm_file" "$url"; then
+      if identity=$(rpm -qp --qf '%{NAME} %{VERSION} %{RELEASE} %{ARCH}' "$rpm_file") &&
+          [[ "$identity" == "softmaker-freeoffice-2024 2024 $build x86_64" ]]; then
+        downloaded=1
+        break
+      fi
+      warning "FreeOffice download is not the expected RPM; trying the other official origin."
+      rm -f -- "$rpm_file"
+    else
+      rc=$?
+      case "$rc" in
+        130) handle_signal INT 130 ;;
+        143) handle_signal TERM 143 ;;
+        23) warning "Cannot write FreeOffice download. Check disk space and permissions."; break ;;
+        33) rm -f -- "$rpm_file" ;;
+      esac
+      warning "FreeOffice download failed (curl $rc); trying the other official origin if available."
+    fi
+  done
+  if (( ! downloaded )); then
+    rm -rf -- "$work"
+    warning "FreeOffice download failed. LibreOffice will be kept."
+    return 1
+  fi
+
+  # Keep official updates and enforce signatures for the local RPM as well.
+  if ! curl --proto '=https' --proto-redir '=https' -fL --retry 2 \
+      --connect-timeout 15 --max-time 120 \
+      https://shop.softmaker.com/repo/rpm/softmaker-repo.asc -o "$work/key.asc"; then
+    rm -rf -- "$work"
+    warning "Cannot obtain the FreeOffice signing key. LibreOffice will be kept."
+    return 1
+  fi
+  cat > "$work/softmaker.repo" <<'REPO'
+[softmaker]
+name=SoftMaker Software GmbH
+baseurl=https://shop.softmaker.com/repo/rpm
+enabled=1
+gpgcheck=1
+gpgkey=https://shop.softmaker.com/repo/rpm/softmaker-repo.asc
+REPO
+  if ensure_sudo && sudo rpm --import "$work/key.asc" &&
+      rpmkeys --checksig "$rpm_file" &&
+      sudo install -m 644 "$work/softmaker.repo" /etc/yum.repos.d/softmaker.repo &&
+      sudo dnf --repo=fedora --repo=updates --setopt=localpkg_gpgcheck=1 \
+        install -y "$rpm_file" && rpm_app_installed softmaker-freeoffice-2024; then
+    rm -rf -- "$work"
+    ok "FreeOffice installation confirmed."
+    return 0
+  fi
+  warning "FreeOffice installation failed or its package is missing. LibreOffice will be kept."
+  note "Downloaded files retained for diagnosis: $work"
+  return 1
 }
 
 # ─────────────────────────────────────────────
@@ -1019,9 +1105,8 @@ _nvidia_do_install() {
 
 # ─────────────────────────────────────────────
 # NVIDIA + CUDA
-# Auto-detects GPU — when called from run_all, skips if not found.
-# When called from menu [6], offers to force install if not detected
-# (useful when booting with onboard GPU while NVIDIA card is present).
+# Detection informs the user; both full setup and option [6] always ask.
+# A missing PCI device or failed query must not silently decide for the user.
 # ─────────────────────────────────────────────
 install_nvidia() {
   info "[NVIDIA] Detecting GPU"
@@ -1029,19 +1114,13 @@ install_nvidia() {
   if ! GPU_DEVICES=$(gpu_devices); then
     detection_ok=0
     warning "GPU query failed; this does not mean that no NVIDIA card is present."
-    if [[ "$mode" == auto ]]; then
-      note "Use option [6] to explicitly request installation after checking the hardware."
-      return 1
-    fi
   fi
   if [[ "$detection_ok" -eq 1 ]] && gpu_vendor_present 10de; then
     note "NVIDIA display device(s):"
     awk '$3 ~ /^10de:/ {print}' <<< "$GPU_DEVICES"
-  elif [[ "$mode" == auto ]]; then
-    note "No NVIDIA GPU detected; skipping NVIDIA and CUDA."
-    return 0
   else
-    warning "NVIDIA was not detected. Manual installation is available for hardware you know is supported."
+    note "No NVIDIA GPU was identified. You can still request driver installation for supported hardware."
+    note "A VM may not expose the physical GPU. Installing a driver alone does not expose it."
     [[ -z "$GPU_DEVICES" ]] || printf 'Detected PCI display devices:\n%s\n' "$GPU_DEVICES"
   fi
   read -rp "  Install NVIDIA driver? [yes/sim/N]: " GPU_CONFIRM || return 0
