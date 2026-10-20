@@ -42,16 +42,12 @@ The NVIDIA driver (`akmod-nvidia`) is a kernel module that requires signing to w
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/felipy2k/Fedora-Y2K.git
-cd Fedora-Y2K
-if grep -qx 'SCRIPT_VERSION="2026.10.19-r3"' Fedora-Y2K.sh; then
-  bash Fedora-Y2K.sh
-else
-  printf '%s\n' 'This copy is not revision 2026.10.19-r3. Obtain the matching script before running it.'
-fi
+git clone https://github.com/felipy2k/fedora-Y2K.git &&
+cd fedora-Y2K &&
+bash Fedora-Y2K.sh
 ```
 
-> 🔎 This revision identifies itself as **2026.10.19-r3** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.19-r3.sh`.
+> 🔎 This revision identifies itself as **2026.10.19-r8** in the menu and log. To run a downloaded script, open a terminal in its folder and use `bash Fedora-Y2K-2026.10.19-r8.sh`.
 
 > ⚠️ **Do not run as root.** The script uses `sudo` internally where needed.
 > 🖥️ **Run it from inside your GNOME session** (a terminal in the desktop), not over SSH or a bare TTY — the visual steps need a graphical session.
@@ -118,7 +114,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 - ⚡ Enables power services: `nvidia-hibernate`, `nvidia-resume`, `nvidia-suspend`
 - 🧪 Optional: full CUDA Toolkit (`nvcc`, cuBLAS, headers) via official NVIDIA repo
 - 🟢 **GPU detected** → asks for confirmation (`yes` or `sim`) before installation
-- 🟡 **GPU not detected** → complete setup skips NVIDIA; option **[6]** allows explicit confirmation for supported hardware
+- 🟡 **GPU not detected or query failed** → both complete setup and option **[6]** ask whether to install the driver. Installation starts only after explicit confirmation (`yes` or `sim`). A VM needs GPU passthrough to expose the physical card.
 
 ---
 
@@ -133,7 +129,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🖥️ GNOME Apps | Files (Nautilus), Tweaks, Baobab, Déjà Dup, Boxes, Calculator, Calendar, Characters, Contacts, Simple Scan, Disk Utility, Text Editor, Font Viewer, Color Manager, Software, Clocks, Logs, Evince, Loupe, File Roller, ABRT, **Drawing**, Papers, Papers Nautilus integration, Dialect, Sushi, System Monitor, Settings, Ptyxis, Parental Controls |
 | 🔧 Utilities | Timeshift, OpenLogi, fastfetch, pipx, DreamChess, lm_sensors, Deskflow, Fedora Media Writer, qBittorrent, Remmina (RDP/VNC) |
 | 🛡️ VPN | **NordVPN** CLI + GUI (official installer, daemon enabled, user added to group) |
-| 📝 Office | FreeOffice 2024 (official SoftMaker installer) |
+| 📝 Office | FreeOffice 2024 revision 1238 (official signed RPM; SoftMaker repository for updates) |
 | 🤖 AI | ChatGPT (official RPM download) |
 
 ---
@@ -300,9 +296,10 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 <summary>🛡️ Reliability & recovery</summary>
 
 - 📋 **Logging** — timestamped log saved to `~/fedora-y2k-YYYYMMDD-HHMMSS.log`
+- ⛔ **Cancellation** — Ctrl+C stops the script without starting subsequent stages and records the cancellation in the log
 - 🔑 **Sudo keepalive** — authenticates once, then refreshes the `sudo` timestamp in the background so long installs never pause for a password mid-run
 - 🖥️ **Session-aware** — visual steps skip cleanly when no graphical session is present (SSH/TTY)
-- 📦 **RPM transactions** — missing applications are installed together, checked individually, and retried individually when necessary; installed applications are skipped
+- 📦 **RPM transactions** — missing applications and GStreamer codecs are installed in batches, checked individually, and retried individually when necessary; installed packages are skipped
 - 💾 **Package backup** — cleanup requires a successful RPM inventory backup; replacement applications are checked before removing their alternatives
 - 💿 **Disk space check** — warns if less than 15 GB free
 - 🐧 **Kernel limit** — sets `installonly_limit=3` to retain fallback kernel versions
@@ -314,3 +311,5 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 ---
 
 *Made with ❤️ for Fedora users*
+
+FreeOffice downloads from SoftMaker with visible transfer statistics and an alternate official source. Transfers below 1 KiB/s for 60 seconds are stopped; a partial download can resume at the alternate source. Package identity and signature are checked before installation. LibreOffice is retained if installation fails.
