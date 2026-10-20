@@ -91,6 +91,7 @@ repos → update → RPMs → FreeOffice → Flatpaks → NVIDIA → Extensions 
 | 🔓 | fedora-cisco-openh264 (H.264 for Firefox/WebRTC) |
 | 🤖 | ChatGPT repository, configured by the official RPM |
 | 🛡️ | NordVPN repository, configured by its installer |
+| 📝 | SoftMaker repository for FreeOffice updates |
 | 🧪 | NVIDIA CUDA repository, when requested |
 
 ---
@@ -233,7 +234,7 @@ When Fedora releases a system update and RPM Fusion hasn't yet published the mat
 
 If Secure Boot is enabled, the akmods signing key must be enrolled before NVIDIA setup proceeds. The script checks enrollment and the built module signature. See: [RPM Fusion — Secure Boot](https://rpmfusion.org/Howto/Secure%20Boot)
 
-**GPU not detected?** The complete setup skips NVIDIA when no NVIDIA display device is enumerated. Option **[6]** allows an explicitly confirmed installation for supported hardware. GPU detection uses numeric PCI manufacturer and display-class IDs.
+**GPU not detected?** Both **[1] Run EVERYTHING** and **[6]** ask whether to install the driver, even if detection fails or no NVIDIA display device is enumerated. Confirm with `yes` or `sim` to proceed. This also allows installation when starting Fedora with the Intel GPU. GPU detection uses numeric PCI manufacturer and display-class IDs with a sysfs fallback.
 </details>
 
 <details>
@@ -252,6 +253,20 @@ Installed via the official NordVPN installer (`downloads.nordcdn.com`) — handl
 <summary>🤖 ChatGPT</summary>
 
 Downloaded from the official RPM source in options **[1]** and **[4]**. The complete application catalog targets `x86_64`. The RPM includes its signing key and update repository. The script checks the package identity and installation result. No `assets/` folder is required. Already installed copies are skipped; sign in through the app after installation.
+</details>
+
+<details>
+<summary>📝 FreeOffice</summary>
+
+Options **[1]** and **[4]** install **FreeOffice 2024 revision 1238** from an official SoftMaker RPM. The download shows transfer statistics and can resume at a second official source if the first fails. Transfers below 1 KiB/s for 60 seconds are stopped. The script checks the package identity and signature, installs it through DNF, and confirms that the package is installed. The SoftMaker repository provides subsequent updates. Already installed copies are skipped.
+
+During the RPM transaction, **“Preparing transaction — 100%”** may remain on screen while the package's internal scripts run. This alone does not mean installation is stuck. Avoid interrupting an active transaction; inspect the log and running processes if it takes unusually long.
+
+LibreOffice is removed only after FreeOffice installation is confirmed. To check the installed package:
+
+```bash
+rpm -q softmaker-freeoffice-2024
+```
 </details>
 
 <details>
@@ -297,7 +312,7 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 
 - 📋 **Logging** — timestamped log saved to `~/fedora-y2k-YYYYMMDD-HHMMSS.log`
 - ⛔ **Cancellation** — Ctrl+C stops the script without starting subsequent stages and records the cancellation in the log
-- 🔑 **Sudo keepalive** — authenticates once, then refreshes the `sudo` timestamp in the background so long installs never pause for a password mid-run
+- 🔑 **Sudo keepalive** — validates credentials and refreshes the `sudo` timestamp in the background to reduce repeated password prompts; system authentication policies may still require another prompt
 - 🖥️ **Session-aware** — visual steps skip cleanly when no graphical session is present (SSH/TTY)
 - 📦 **RPM transactions** — missing applications and GStreamer codecs are installed in batches, checked individually, and retried individually when necessary; installed packages are skipped
 - 💾 **Package backup** — cleanup requires a successful RPM inventory backup; replacement applications are checked before removing their alternatives
@@ -311,5 +326,3 @@ The visual steps — **[8] Apply visual settings** and **[7] Install GNOME exten
 ---
 
 *Made with ❤️ for Fedora users*
-
-FreeOffice downloads from SoftMaker with visible transfer statistics and an alternate official source. Transfers below 1 KiB/s for 60 seconds are stopped; a partial download can resume at the alternate source. Package identity and signature are checked before installation. LibreOffice is retained if installation fails.
