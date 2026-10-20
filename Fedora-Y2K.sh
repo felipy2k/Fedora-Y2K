@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-SCRIPT_VERSION="2026.10.19-r8"
+SCRIPT_VERSION="2026.10.20-r10"
 if [[ "${1:-}" == --version ]]; then
   printf 'Fedora Y2K %s\n' "$SCRIPT_VERSION"
   exit 0
@@ -488,6 +488,7 @@ RPM_APP_PACKAGES=(
   inkscape
   blender
   steam
+  bottles
   gnome-tweaks
   baobab
   nautilus
